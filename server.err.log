@@ -1,0 +1,26 @@
+error: caracter com sequência de bytes 0xef 0xbf 0xbd na codificação "UTF8" não tem equivalente na codificação "LATIN1"
+    at C:\Projetos\Odonto\Odonto-Backend\node_modules\pg\lib\client.js:652:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async syncSpecialties (C:\Projetos\Odonto\Odonto-Backend\dist\modules\professionals\professional.service.js:52:9)
+    at async C:\Projetos\Odonto\Odonto-Backend\dist\modules\professionals\professional.service.js:241:13
+    at async transaction (C:\Projetos\Odonto\Odonto-Backend\dist\database\pool.js:27:24)
+    at async createProfessional (C:\Projetos\Odonto\Odonto-Backend\dist\modules\professionals\professional.service.js:228:20)
+    at async C:\Projetos\Odonto\Odonto-Backend\dist\modules\professionals\professional.routes.js:15:26 {
+  length: 188,
+  severity: 'ERRO',
+  code: '22P05',
+  detail: undefined,
+  hint: undefined,
+  position: undefined,
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'wchar.c',
+  line: '2051',
+  routine: 'report_untranslatable_char'
+}

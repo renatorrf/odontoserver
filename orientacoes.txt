@@ -1,0 +1,24 @@
+Para rodar local em desenvolvimento:
+npm run dev
+
+Para buildar:
+npm run build
+
+Para rodar a versão buildada:
+npm start
+
+O server.js não existe na raiz porque este backend foi criado em TypeScript.
+O arquivo fonte é:
+src/server.ts
+
+Depois do build, ele vira:
+dist/server.js
+
+Então o fluxo é:
+
+npm run dev        # desenvolvimento
+npm run build      # gera dist/
+npm start          # executa dist/server.js
+
+Para aplicar migrations:
+npm run db:migrate
