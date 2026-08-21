@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.listStrategicCategoryProcedures = listStrategicCategoryProcedures;
 exports.getStrategicDashboard = getStrategicDashboard;
 const pool_1 = require("../../database/pool");
 function money(value) {
@@ -23,6 +24,141 @@ function variation(current, previous) {
         return current === 0 ? 0 : null;
     }
     return money(((current - previous) / Math.abs(previous)) * 100);
+}
+async function listStrategicCategoryProcedures(auth, input) {
+    const result = await (0, pool_1.query)(`select pr.id, 'realizado'::text as origem,
+            coalesce(cp.nome, pr.descricao) as procedimento,
+            pa.id as paciente_id, pa.nome as paciente_nome,
+            pf.id as profissional_id, coalesce(pf.nome, pr.profissional_nome) as profissional_nome,
+            pr.data_procedimento::text as data, null::text as horario,
+            '1'::text as quantidade, coalesce(pr.valor, 0)::text as valor_unitario,
+            coalesce(pr.valor, 0)::text as valor_total, 'realizado'::text as status
+       from odonto.procedimentos_realizados pr
+       left join odonto.catalogo_procedimentos cp
+         on cp.id = pr.catalogo_procedimento_id and cp.empresa_id = pr.empresa_id
+       left join odonto.pacientes pa on pa.id = pr.paciente_id and pa.empresa_id = pr.empresa_id
+       left join odonto.profissionais pf on pf.id = pr.profissional_id and pf.empresa_id = pr.empresa_id
+      where pr.empresa_id = $1 and pr.data_procedimento between $2::date and $3::date
+        and coalesce(cp.categoria, 'Sem categoria') = $4
+      union all
+     select aep.id, 'agendado'::text as origem,
+            coalesce(cp.nome, aep.descricao) as procedimento,
+            pa.id as paciente_id, pa.nome as paciente_nome,
+            pf.id as profissional_id, pf.nome as profissional_nome,
+            to_char(ae.inicio_em at time zone 'America/Sao_Paulo', 'YYYY-MM-DD') as data,
+            case when ae.dia_inteiro then null else to_char(ae.inicio_em at time zone 'America/Sao_Paulo', 'HH24:MI') end as horario,
+            coalesce(aep.quantidade, 1)::text as quantidade,
+            coalesce(aep.valor, cp.valor, 0)::text as valor_unitario,
+            (coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1))::text as valor_total,
+            ae.status::text as status
+       from odonto.agenda_eventos ae
+       inner join odonto.agenda_evento_procedimentos aep
+         on aep.agenda_evento_id = ae.id and aep.empresa_id = ae.empresa_id
+       left join odonto.catalogo_procedimentos cp
+         on cp.id = aep.catalogo_procedimento_id and cp.empresa_id = ae.empresa_id
+       left join odonto.pacientes pa on pa.id = ae.paciente_id and pa.empresa_id = ae.empresa_id
+       left join odonto.profissionais pf on pf.id = ae.profissional_id and pf.empresa_id = ae.empresa_id
+      where ae.empresa_id = $1
+        and ae.inicio_em >= $2::date and ae.inicio_em < ($3::date + interval '1 day')
+        and ae.status in ('agendado', 'confirmado', 'em_atendimento')
+        and coalesce(cp.categoria, 'Sem categoria') = $4
+      order by data desc, horario desc nulls last, procedimento`, [auth.empresaId, input.inicio, input.fim, input.categoria]);
+    const items = result.rows.map((row) => ({
+        id: row.id,
+        origem: row.origem,
+        procedimento: row.procedimento,
+        pacienteId: row.paciente_id,
+        pacienteNome: row.paciente_nome,
+        profissionalId: row.profissional_id,
+        profissionalNome: row.profissional_nome,
+        data: row.data,
+        horario: row.horario,
+        quantidade: Number(row.quantidade),
+        valorUnitario: Number(row.valor_unitario),
+        valorTotal: Number(row.valor_total),
+        status: row.status,
+    }));
+    const realizado = money(items.filter((item) => item.origem === 'realizado').reduce((sum, item) => sum + item.valorTotal, 0));
+    const projetado = money(items.filter((item) => item.origem === 'agendado').reduce((sum, item) => sum + item.valorTotal, 0));
+    return {
+        categoria: input.categoria,
+        resumo: { realizado, projetado, total: money(realizado + projetado), procedimentos: items.reduce((sum, item) => sum + item.quantidade, 0) },
+        items,
+    };
+}
+async function loadBillingBreakdown(auth, input) {
+    const [totals, receivedMethods, pendingMethods, orthodontics] = await Promise.all([
+        (0, pool_1.query)(`select coalesce(sum(fl.valor),0)::text as faturado,
+              coalesce(sum(coalesce(pay.recebido,0)),0)::text as recebido,
+              count(distinct fl.orcamento_id)::text as atendimentos
+         from odonto.paciente_financeiro_lancamentos fl
+         left join lateral (
+           select sum(pg.valor) as recebido
+             from odonto.paciente_financeiro_pagamentos pg
+            where pg.empresa_id=fl.empresa_id and pg.lancamento_id=fl.id and pg.estornado_em is null
+         ) pay on true
+        where fl.empresa_id=$1 and fl.vencimento between $2::date and $3::date and fl.status<>'cancelado'`, [auth.empresaId, input.inicio, input.fim]),
+        (0, pool_1.query)(`select pg.forma_pagamento::text as forma, sum(pg.valor)::text as valor
+         from odonto.paciente_financeiro_pagamentos pg
+         join odonto.paciente_financeiro_lancamentos fl
+           on fl.id=pg.lancamento_id and fl.empresa_id=pg.empresa_id
+        where pg.empresa_id=$1 and fl.vencimento between $2::date and $3::date
+          and fl.status<>'cancelado' and pg.estornado_em is null
+        group by pg.forma_pagamento order by sum(pg.valor) desc`, [auth.empresaId, input.inicio, input.fim]),
+        (0, pool_1.query)(`select coalesce(last_payment.forma,'nao_definida') as forma,
+              sum(greatest(fl.valor-coalesce(pay.recebido,0),0))::text as valor
+         from odonto.paciente_financeiro_lancamentos fl
+         left join lateral (
+           select sum(pg.valor) as recebido
+             from odonto.paciente_financeiro_pagamentos pg
+            where pg.empresa_id=fl.empresa_id and pg.lancamento_id=fl.id and pg.estornado_em is null
+         ) pay on true
+         left join lateral (
+           select pg.forma_pagamento::text as forma
+             from odonto.paciente_financeiro_pagamentos pg
+            where pg.empresa_id=fl.empresa_id and pg.lancamento_id=fl.id and pg.estornado_em is null
+            order by pg.pago_em desc limit 1
+         ) last_payment on true
+        where fl.empresa_id=$1 and fl.vencimento between $2::date and $3::date and fl.status<>'cancelado'
+          and greatest(fl.valor-coalesce(pay.recebido,0),0)>0
+        group by coalesce(last_payment.forma,'nao_definida') order by sum(greatest(fl.valor-coalesce(pay.recebido,0),0)) desc`, [auth.empresaId, input.inicio, input.fim]),
+        (0, pool_1.query)(`select coalesce(sum(fl.valor),0)::text as faturado,
+              coalesce(sum(coalesce(pay.recebido,0)),0)::text as recebido,
+              count(distinct fl.orcamento_id)::text as atendimentos
+         from odonto.paciente_financeiro_lancamentos fl
+         left join lateral (
+           select sum(pg.valor) as recebido
+             from odonto.paciente_financeiro_pagamentos pg
+            where pg.empresa_id=fl.empresa_id and pg.lancamento_id=fl.id and pg.estornado_em is null
+         ) pay on true
+        where fl.empresa_id=$1 and fl.vencimento between $2::date and $3::date and fl.status<>'cancelado'
+          and exists (
+            select 1 from odonto.orcamento_itens oi
+            left join odonto.catalogo_procedimentos cp on cp.id=oi.catalogo_procedimento_id
+            where oi.orcamento_id=fl.orcamento_id
+              and (coalesce(cp.categoria,'') ilike '%ortod%' or oi.descricao ilike '%ortod%')
+          )`, [auth.empresaId, input.inicio, input.fim]),
+    ]);
+    const total = totals.rows[0];
+    const ortho = orthodontics.rows[0];
+    const faturado = Number(total.faturado);
+    const recebido = Number(total.recebido);
+    const orthoFaturado = Number(ortho.faturado);
+    const orthoRecebido = Number(ortho.recebido);
+    return {
+        faturado,
+        recebido,
+        naoRecebido: money(Math.max(faturado - recebido, 0)),
+        ticketMedio: Number(total.atendimentos) ? money(faturado / Number(total.atendimentos)) : 0,
+        recebidoPorForma: receivedMethods.rows.map((row) => ({ forma: row.forma, valor: Number(row.valor) })),
+        pendentePorForma: pendingMethods.rows.map((row) => ({ forma: row.forma, valor: Number(row.valor) })),
+        ortodontia: {
+            faturado: orthoFaturado,
+            recebido: orthoRecebido,
+            naoRecebido: money(Math.max(orthoFaturado - orthoRecebido, 0)),
+            ticketMedio: Number(ortho.atendimentos) ? money(orthoFaturado / Number(ortho.atendimentos)) : 0,
+        },
+    };
 }
 async function loadSummary(auth, input) {
     const [revenueResult, projectionResult, expenseResult] = await Promise.all([
@@ -137,7 +273,7 @@ async function getStrategicDashboard(auth, input) {
     const interval = unit === 'day' ? '1 day' : '1 month';
     const trunc = unit === 'day' ? 'day' : 'month';
     const previous = previousPeriod(input);
-    const [currentSummary, previousSummary, seriesResult, categoryResult, professionalResult] = await Promise.all([
+    const [currentSummary, previousSummary, seriesResult, categoryResult, professionalResult, billing, expenseCategoryResult] = await Promise.all([
         loadSummary(auth, input),
         loadSummary(auth, previous),
         (0, pool_1.query)(`
@@ -275,6 +411,11 @@ async function getStrategicDashboard(auth, input) {
            and (coalesce(realized.receita, 0) > 0 or coalesce(projected.receita, 0) > 0)
          order by coalesce(realized.receita, 0) + coalesce(projected.receita, 0) desc, p.nome
       `, [auth.empresaId, input.inicio, input.fim]),
+        loadBillingBreakdown(auth, input),
+        (0, pool_1.query)(`select categoria::text, sum(valor)::text as valor, count(*)::text as quantidade
+         from odonto.despesas
+        where empresa_id=$1 and competencia between $2::date and $3::date and status<>'cancelada'
+        group by categoria order by sum(valor) desc`, [auth.empresaId, input.inicio, input.fim]),
     ]);
     const series = seriesResult.rows.map((row) => {
         const receitaRealizada = Number(row.receita_realizada);
@@ -292,6 +433,8 @@ async function getStrategicDashboard(auth, input) {
     return {
         periodo: { ...input, granularidade: unit === 'day' ? 'dia' : 'mes' },
         resumo: currentSummary,
+        financeiro: billing,
+        ortodontia: billing.ortodontia,
         comparacao: {
             periodoAnterior: previous,
             receitaRealizada: variation(currentSummary.receitaRealizada, previousSummary.receitaRealizada),
@@ -317,6 +460,11 @@ async function getStrategicDashboard(auth, input) {
             procedimentosRealizados: Number(row.procedimentos_realizados),
             procedimentosAgendados: Number(row.procedimentos_agendados),
             pacientes: Number(row.pacientes),
+        })),
+        despesasCategorias: expenseCategoryResult.rows.map((row) => ({
+            categoria: row.categoria,
+            valor: Number(row.valor),
+            quantidade: Number(row.quantidade),
         })),
     };
 }

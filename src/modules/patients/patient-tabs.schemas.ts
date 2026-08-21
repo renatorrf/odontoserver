@@ -119,8 +119,32 @@ export const quoteItemStatusSchema = z.object({
   status: z.enum(['planejado', 'autorizado', 'em_execucao', 'concluido', 'suspenso', 'cancelado']),
 });
 
+export const clinicalDocumentSchema = z.object({
+  tipo: z.enum(['atestado', 'prescricao', 'orientacao_pos_operatoria', 'outro']),
+  agendamentoId: z.string().uuid().nullable().optional(),
+  procedimentoRealizadoId: z.string().uuid().nullable().optional(),
+  profissionalId: z.string().uuid(),
+  status: z.enum(['rascunho', 'emitido']).default('emitido'),
+  conteudo: z.object({
+    procedimento: z.string().trim().max(240).optional(),
+    diasAfastamento: z.coerce.number().int().min(0).max(365).optional(),
+    descricao: z.string().trim().max(5000).optional(),
+    medicamentos: z.array(z.object({
+      medicamento: z.string().trim().min(2).max(160),
+      apresentacao: z.string().trim().max(120).optional(),
+      concentracao: z.string().trim().max(80).optional(),
+      posologia: z.string().trim().max(1000).optional(),
+      frequencia: z.string().trim().max(160).optional(),
+      duracao: z.string().trim().max(160).optional(),
+      quantidade: z.string().trim().max(80).optional(),
+      observacao: z.string().trim().max(1000).optional(),
+    })).max(30).optional(),
+  }),
+});
+
 export type PatientDocumentMetadata = z.infer<typeof patientDocumentMetadataSchema>;
 export type PatientDocumentUpdate = z.infer<typeof patientDocumentUpdateSchema>;
 export type PatientAnamnesisInput = z.infer<typeof patientAnamnesisSchema>;
 export type PatientAppointmentsQuery = z.infer<typeof patientAppointmentsQuerySchema>;
 export type PatientFinancialEntryInput = z.infer<typeof patientFinancialEntrySchema>;
+export type ClinicalDocumentInput = z.infer<typeof clinicalDocumentSchema>;

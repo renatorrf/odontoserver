@@ -14,6 +14,7 @@ import {
   patientQuoteItemParamsSchema,
   patientQuoteParamsSchema,
   quoteItemStatusSchema,
+  clinicalDocumentSchema,
 } from './patient-tabs.schemas';
 import {
   createPatientAnamnesis,
@@ -27,13 +28,22 @@ import {
   listPatientDocuments,
   listPatientFinancial,
   listPatientQuotes,
+  listPatientTimeline,
   savePatientDocument,
   updatePatientDocument,
   updateQuoteItemStatus,
+  listClinicalDocuments,
+  createClinicalDocument,
+  updateClinicalDocument,
+  listMedications,
 } from './patient-tabs.service';
 
 const router = Router();
 const documentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+
+router.get('/apoio/medicamentos', asyncHandler(async (req, res) => {
+  res.json({ success: true, medicamentos: await listMedications(req.auth!) });
+}));
 
 router.get(
   '/',
@@ -108,6 +118,22 @@ router.get('/:id/documentos', asyncHandler(async (req, res) => {
   res.json({ success: true, documentos: await listPatientDocuments(req.auth!, id) });
 }));
 
+router.get('/:id/documentos-clinicos', asyncHandler(async (req, res) => {
+  const { id } = patientIdParamSchema.parse(req.params);
+  res.json({ success: true, documentos: await listClinicalDocuments(req.auth!, id) });
+}));
+
+router.post('/:id/documentos-clinicos', requirePerfil(['portal_admin','gestor','dentista']), asyncHandler(async (req, res) => {
+  const { id } = patientIdParamSchema.parse(req.params);
+  res.status(201).json({ success: true, documento: await createClinicalDocument(req.auth!, id, clinicalDocumentSchema.parse(req.body)) });
+}));
+
+router.put('/:id/documentos-clinicos/:documentId', requirePerfil(['portal_admin','gestor','dentista']), asyncHandler(async (req, res) => {
+  const { id, documentId } = patientDocumentParamsSchema.parse(req.params);
+  await updateClinicalDocument(req.auth!, id, documentId, clinicalDocumentSchema.parse(req.body));
+  res.json({ success: true, message: 'Documento clinico atualizado.' });
+}));
+
 router.post(
   '/:id/documentos',
   documentUpload.single('arquivo'),
@@ -165,6 +191,11 @@ router.get('/:id/agendamentos', asyncHandler(async (req, res) => {
   const { id } = patientIdParamSchema.parse(req.params);
   const input = patientAppointmentsQuerySchema.parse(req.query);
   res.json({ success: true, agendamentos: await listPatientAppointments(req.auth!, id, input) });
+}));
+
+router.get('/:id/timeline', asyncHandler(async (req, res) => {
+  const { id } = patientIdParamSchema.parse(req.params);
+  res.json({ success: true, timeline: await listPatientTimeline(req.auth!, id) });
 }));
 
 router.get(

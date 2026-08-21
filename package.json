@@ -10,6 +10,7 @@
     "gcp-build": "npm run build",
     "start": "node dist/server.js",
     "db:migrate": "ts-node src/database/migrate.ts",
+    "db:seed:demo": "ts-node src/database/seed-demo.ts",
     "test": "npm run build && node --test dist/modules/finance/receivables.calculator.test.js"
   },
   "dependencies": {

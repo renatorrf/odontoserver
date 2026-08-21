@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.quoteItemStatusSchema = exports.patientFinancialEntrySchema = exports.patientAppointmentsQuerySchema = exports.patientAnamnesisSchema = exports.anamnesisAnswers = exports.patientDocumentUpdateSchema = exports.patientDocumentMetadataSchema = exports.patientQuoteItemParamsSchema = exports.patientQuoteParamsSchema = exports.patientDocumentParamsSchema = void 0;
+exports.clinicalDocumentSchema = exports.quoteItemStatusSchema = exports.patientFinancialEntrySchema = exports.patientAppointmentsQuerySchema = exports.patientAnamnesisSchema = exports.anamnesisAnswers = exports.patientDocumentUpdateSchema = exports.patientDocumentMetadataSchema = exports.patientQuoteItemParamsSchema = exports.patientQuoteParamsSchema = exports.patientDocumentParamsSchema = void 0;
 const zod_1 = require("zod");
 const date = zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const optionalText = zod_1.z.preprocess((value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value), zod_1.z.string().trim().optional());
@@ -100,4 +100,26 @@ exports.patientFinancialEntrySchema = zod_1.z.object({
 });
 exports.quoteItemStatusSchema = zod_1.z.object({
     status: zod_1.z.enum(['planejado', 'autorizado', 'em_execucao', 'concluido', 'suspenso', 'cancelado']),
+});
+exports.clinicalDocumentSchema = zod_1.z.object({
+    tipo: zod_1.z.enum(['atestado', 'prescricao', 'orientacao_pos_operatoria', 'outro']),
+    agendamentoId: zod_1.z.string().uuid().nullable().optional(),
+    procedimentoRealizadoId: zod_1.z.string().uuid().nullable().optional(),
+    profissionalId: zod_1.z.string().uuid(),
+    status: zod_1.z.enum(['rascunho', 'emitido']).default('emitido'),
+    conteudo: zod_1.z.object({
+        procedimento: zod_1.z.string().trim().max(240).optional(),
+        diasAfastamento: zod_1.z.coerce.number().int().min(0).max(365).optional(),
+        descricao: zod_1.z.string().trim().max(5000).optional(),
+        medicamentos: zod_1.z.array(zod_1.z.object({
+            medicamento: zod_1.z.string().trim().min(2).max(160),
+            apresentacao: zod_1.z.string().trim().max(120).optional(),
+            concentracao: zod_1.z.string().trim().max(80).optional(),
+            posologia: zod_1.z.string().trim().max(1000).optional(),
+            frequencia: zod_1.z.string().trim().max(160).optional(),
+            duracao: zod_1.z.string().trim().max(160).optional(),
+            quantidade: zod_1.z.string().trim().max(80).optional(),
+            observacao: zod_1.z.string().trim().max(1000).optional(),
+        })).max(30).optional(),
+    }),
 });

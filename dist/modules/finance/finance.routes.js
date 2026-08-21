@@ -75,6 +75,9 @@ router.get('/resultados', (0, async_handler_1.asyncHandler)(async (req, res) => 
 router.get('/painel-estrategico', (0, async_handler_1.asyncHandler)(async (req, res) => {
     res.json({ success: true, ...(await (0, strategic_dashboard_service_1.getStrategicDashboard)(req.auth, management_schemas_1.reportQuerySchema.parse(req.query))) });
 }));
+router.get('/painel-estrategico/categorias/detalhes', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    res.json({ success: true, ...(await (0, strategic_dashboard_service_1.listStrategicCategoryProcedures)(req.auth, management_schemas_1.strategicCategoryDetailQuerySchema.parse(req.query))) });
+}));
 router.get('/apuracao', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const input = finance_schemas_1.financeStatementQuerySchema.parse(req.query);
     const statement = await (0, finance_service_1.getFinanceStatement)(req.auth, input);

@@ -17,6 +17,11 @@ exports.getPatientDocumentFile = getPatientDocumentFile;
 exports.listPatientAnamneses = listPatientAnamneses;
 exports.createPatientAnamnesis = createPatientAnamnesis;
 exports.listPatientAppointments = listPatientAppointments;
+exports.listPatientTimeline = listPatientTimeline;
+exports.listClinicalDocuments = listClinicalDocuments;
+exports.listMedications = listMedications;
+exports.createClinicalDocument = createClinicalDocument;
+exports.updateClinicalDocument = updateClinicalDocument;
 const node_crypto_1 = require("node:crypto");
 const promises_1 = __importDefault(require("node:fs/promises"));
 const node_path_1 = __importDefault(require("node:path"));
@@ -48,7 +53,8 @@ async function getPatientTabSummary(auth, patientId) {
       select
         (select count(*) from odonto.orcamentos o where o.empresa_id = p.empresa_id and o.paciente_id = p.id)::text as orcamentos,
         (select count(*) from odonto.paciente_financeiro_lancamentos f where f.empresa_id = p.empresa_id and f.paciente_id = p.id and f.status <> 'cancelado')::text as financeiro,
-        (select count(*) from odonto.paciente_documentos d where d.empresa_id = p.empresa_id and d.paciente_id = p.id and d.deleted_at is null)::text as documentos,
+        ((select count(*) from odonto.paciente_documentos d where d.empresa_id = p.empresa_id and d.paciente_id = p.id and d.deleted_at is null)
+          + (select count(*) from odonto.documentos_clinicos dc where dc.empresa_id = p.empresa_id and dc.paciente_id = p.id and dc.status <> 'cancelado'))::text as documentos,
         (select count(*) from odonto.paciente_anamneses a where a.empresa_id = p.empresa_id and a.paciente_id = p.id)::text as anamneses,
         (select count(*) from odonto.agenda_eventos ae where ae.empresa_id = p.empresa_id and ae.paciente_id = p.id)::text as agendamentos,
         exists (
@@ -448,4 +454,143 @@ async function listPatientAppointments(auth, patientId, input) {
         observacoes: row.observacoes,
         confirmadoEm: row.confirmado_em,
     }));
+}
+async function listPatientTimeline(auth, patientId) {
+    await assertPatient({ query: pool_1.query }, auth, patientId);
+    const result = await (0, pool_1.query)(`with agenda as (
+       select ae.id::text as id, ae.inicio_em as data_hora, aep.descricao,
+              p.nome as profissional_nome, ae.status::text as status,
+              aep.status::text as procedimento_status, null::text as regiao,
+              ae.observacoes_procedimentos as observacoes, ae.orcamento_id,
+              upper(substr(ae.orcamento_id::text,1,8)) as orcamento_numero,
+              ae.id as agendamento_id, aep.valor::numeric as valor,
+              coalesce(finance.recebido,0)::numeric as recebido,
+              greatest(coalesce(finance.faturado,aep.valor,0)-coalesce(finance.recebido,0),0)::numeric as saldo,
+              coalesce(docs.documentos,'[]'::json) as documentos
+         from odonto.agenda_eventos ae
+         join odonto.agenda_evento_procedimentos aep
+           on aep.agenda_evento_id=ae.id and aep.empresa_id=ae.empresa_id
+         left join odonto.profissionais p on p.id=ae.profissional_id and p.empresa_id=ae.empresa_id
+         left join lateral (
+           select sum(fl.valor) filter(where fl.status<>'cancelado') as faturado,
+                  coalesce(sum(pg.valor) filter(where pg.estornado_em is null),0) as recebido
+             from odonto.paciente_financeiro_lancamentos fl
+             left join odonto.paciente_financeiro_pagamentos pg
+               on pg.lancamento_id=fl.id and pg.empresa_id=fl.empresa_id
+            where fl.empresa_id=ae.empresa_id and fl.orcamento_id=ae.orcamento_id
+         ) finance on true
+         left join lateral (
+           select json_agg(source.documento) as documentos from (
+             select json_build_object('id',d.id,'tipo',d.categoria::text,
+               'descricao',coalesce(d.descricao,d.nome_original),'nomeOriginal',d.nome_original) as documento
+               from odonto.paciente_documentos d
+              where d.empresa_id=ae.empresa_id and d.paciente_id=ae.paciente_id
+                and d.deleted_at is null and d.orcamento_id=ae.orcamento_id
+             union all
+             select json_build_object('id',cd.id,'tipo',cd.tipo,
+               'descricao',case cd.tipo when 'atestado' then 'Atestado' when 'prescricao' then 'Prescricao' when 'orientacao_pos_operatoria' then 'Orientacao pos-operatoria' else 'Documento clinico' end,
+               'nomeOriginal',null)
+               from odonto.documentos_clinicos cd
+              where cd.empresa_id=ae.empresa_id and cd.paciente_id=ae.paciente_id
+                and cd.agendamento_id=ae.id and cd.status<>'cancelado'
+           ) source
+         ) docs on true
+        where ae.empresa_id=$1 and ae.paciente_id=$2 and ae.tipo='consulta'
+     ), realizados as (
+       select pr.id::text as id, pr.data_procedimento::timestamptz as data_hora, pr.descricao,
+              coalesce(p.nome,pr.profissional_nome) as profissional_nome, 'atendido'::text as status,
+              'concluido'::text as procedimento_status, null::text as regiao,
+              pr.observacoes, null::uuid as orcamento_id, null::text as orcamento_numero,
+              null::uuid as agendamento_id, pr.valor::numeric as valor,
+              0::numeric as recebido, pr.valor::numeric as saldo,
+              coalesce(docs.documentos,'[]'::json) as documentos
+         from odonto.procedimentos_realizados pr
+         left join odonto.profissionais p on p.id=pr.profissional_id and p.empresa_id=pr.empresa_id
+         left join lateral (
+           select json_agg(source.documento) as documentos from (
+             select json_build_object('id',d.id,'tipo',d.categoria::text,
+               'descricao',coalesce(d.descricao,d.nome_original),'nomeOriginal',d.nome_original) as documento
+               from odonto.paciente_documentos d
+              where d.empresa_id=pr.empresa_id and d.paciente_id=pr.paciente_id
+                and d.deleted_at is null and d.procedimento_realizado_id=pr.id
+             union all
+             select json_build_object('id',cd.id,'tipo',cd.tipo,'descricao',cd.tipo,'nomeOriginal',null)
+               from odonto.documentos_clinicos cd
+              where cd.empresa_id=pr.empresa_id and cd.paciente_id=pr.paciente_id
+                and cd.procedimento_realizado_id=pr.id and cd.status<>'cancelado'
+           ) source
+         ) docs on true
+        where pr.empresa_id=$1 and pr.paciente_id=$2
+     )
+     select * from agenda union all select * from realizados order by data_hora desc`, [auth.empresaId, patientId]);
+    return result.rows.map((row) => ({
+        id: row.id,
+        dataHora: row.data_hora,
+        procedimento: row.descricao,
+        profissionalNome: row.profissional_nome,
+        status: row.status,
+        procedimentoStatus: row.procedimento_status,
+        regiao: row.regiao,
+        observacoes: row.observacoes,
+        orcamentoId: row.orcamento_id,
+        orcamentoNumero: row.orcamento_numero,
+        agendamentoId: row.agendamento_id,
+        valor: Number(row.valor || 0),
+        recebido: Number(row.recebido || 0),
+        saldo: Number(row.saldo || 0),
+        documentos: row.documentos || [],
+    }));
+}
+async function listClinicalDocuments(auth, patientId) {
+    await assertPatient({ query: pool_1.query }, auth, patientId);
+    const result = await (0, pool_1.query)(`select d.id,d.tipo,d.status,d.conteudo,d.versao,d.emitido_em,d.agendamento_id,
+            d.procedimento_realizado_id,d.profissional_id,p.nome as profissional_nome,
+            p.conselho_tipo,p.conselho_uf,p.conselho_numero,u.nome as responsavel_nome
+       from odonto.documentos_clinicos d
+       left join odonto.profissionais p on p.id=d.profissional_id and p.empresa_id=d.empresa_id
+       left join odonto.usuarios u on u.id=d.created_by
+      where d.empresa_id=$1 and d.paciente_id=$2 and d.status<>'cancelado'
+      order by d.emitido_em desc`, [auth.empresaId, patientId]);
+    return result.rows.map((row) => ({ id: row.id, tipo: row.tipo, status: row.status,
+        conteudo: row.conteudo, versao: row.versao, emitidoEm: row.emitido_em,
+        agendamentoId: row.agendamento_id, procedimentoRealizadoId: row.procedimento_realizado_id,
+        profissionalId: row.profissional_id, profissionalNome: row.profissional_nome,
+        conselho: [row.conselho_tipo, row.conselho_numero, row.conselho_uf].filter(Boolean).join(' '),
+        responsavelNome: row.responsavel_nome }));
+}
+async function listMedications(auth) {
+    const result = await (0, pool_1.query)(`select id,nome,apresentacao,concentracao,posologia_padrao
+    from odonto.medicamentos where empresa_id=$1 and ativo=true order by nome,concentracao`, [auth.empresaId]);
+    return result.rows.map((row) => ({ id: row.id, nome: row.nome, apresentacao: row.apresentacao,
+        concentracao: row.concentracao, posologia: row.posologia_padrao }));
+}
+async function createClinicalDocument(auth, patientId, input) {
+    return (0, pool_1.transaction)(async (client) => {
+        await assertPatient(client, auth, patientId);
+        const result = await client.query(`insert into odonto.documentos_clinicos (empresa_id,paciente_id,agendamento_id,
+        procedimento_realizado_id,profissional_id,tipo,status,conteudo,created_by,updated_by)
+       select $1,$2,$3,$4,p.id,$6,$7,$8::jsonb,$9,$9
+         from odonto.profissionais p where p.id=$5 and p.empresa_id=$1 returning id`, [auth.empresaId, patientId, input.agendamentoId ?? null, input.procedimentoRealizadoId ?? null,
+            input.profissionalId, input.tipo, input.status, JSON.stringify(input.conteudo), auth.usuarioId]);
+        if (!result.rowCount)
+            throw (0, http_error_1.notFound)('Profissional nao encontrado.');
+        await client.query(`insert into odonto.audit_logs (empresa_id,usuario_id,entidade,entidade_id,acao,payload)
+      values ($1,$2,'documento_clinico',$3,$4,$5::jsonb)`, [auth.empresaId, auth.usuarioId,
+            result.rows[0].id, `emissao_${input.tipo}`, JSON.stringify({ pacienteId: patientId, agendamentoId: input.agendamentoId ?? null })]);
+        return { id: result.rows[0].id };
+    });
+}
+async function updateClinicalDocument(auth, patientId, documentId, input) {
+    return (0, pool_1.transaction)(async (client) => {
+        await assertPatient(client, auth, patientId);
+        const result = await client.query(`update odonto.documentos_clinicos set profissional_id=$5,tipo=$6,status=$7,
+        conteudo=$8::jsonb,agendamento_id=$3,procedimento_realizado_id=$4,
+        versao=versao+1,updated_by=$9 where id=$1 and paciente_id=$2 and empresa_id=$10`, [documentId, patientId, input.agendamentoId ?? null, input.procedimentoRealizadoId ?? null,
+            input.profissionalId, input.tipo, input.status, JSON.stringify(input.conteudo), auth.usuarioId, auth.empresaId]);
+        if (!result.rowCount)
+            throw (0, http_error_1.notFound)('Documento clinico nao encontrado.');
+        await client.query(`insert into odonto.audit_logs (empresa_id,usuario_id,entidade,entidade_id,acao,payload)
+      values ($1,$2,'documento_clinico',$3,'edicao',$4::jsonb)`, [auth.empresaId, auth.usuarioId,
+            documentId, JSON.stringify({ pacienteId: patientId, tipo: input.tipo })]);
+    });
 }

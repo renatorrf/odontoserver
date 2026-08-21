@@ -258,8 +258,8 @@ export async function getQuote(auth: AuthContext, quoteId: string) {
   const history = await query<{ id: string; acao: string; payload: Record<string, unknown> | null; created_at: string; usuario_nome: string | null }>(`
     select a.id, a.acao, a.payload, a.created_at::text, u.nome as usuario_nome
       from odonto.audit_logs a left join odonto.usuarios u on u.id = a.usuario_id
-     where a.empresa_id = $1 and ((a.entidade = 'orcamento' and a.entidade_id = $2)
-       or a.payload->>'orcamentoId' = $2::text)
+     where a.empresa_id = $1::uuid and ((a.entidade = 'orcamento' and a.entidade_id = $2::uuid)
+       or a.payload->>'orcamentoId' = $2::uuid::text)
      order by a.created_at desc limit 100`, [auth.empresaId, quoteId]);
   return {
     ...mapQuote(row),

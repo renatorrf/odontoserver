@@ -170,8 +170,8 @@ async function getQuote(auth, quoteId) {
     const history = await (0, pool_1.query)(`
     select a.id, a.acao, a.payload, a.created_at::text, u.nome as usuario_nome
       from odonto.audit_logs a left join odonto.usuarios u on u.id = a.usuario_id
-     where a.empresa_id = $1 and ((a.entidade = 'orcamento' and a.entidade_id = $2)
-       or a.payload->>'orcamentoId' = $2::text)
+     where a.empresa_id = $1::uuid and ((a.entidade = 'orcamento' and a.entidade_id = $2::uuid)
+       or a.payload->>'orcamentoId' = $2::uuid::text)
      order by a.created_at desc limit 100`, [auth.empresaId, quoteId]);
     return {
         ...mapQuote(row),

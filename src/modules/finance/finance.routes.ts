@@ -17,6 +17,7 @@ import {
   expenseSchema,
   operationalCostConfigSchema,
   reportQuerySchema,
+  strategicCategoryDetailQuerySchema,
   updateExpenseSchema,
 } from './management.schemas';
 import {
@@ -33,7 +34,7 @@ import {
   updateExpense,
   updateExpensePayment,
 } from './management.service';
-import { getStrategicDashboard } from './strategic-dashboard.service';
+import { getStrategicDashboard, listStrategicCategoryProcedures } from './strategic-dashboard.service';
 import { paymentReversalParamsSchema, paymentReversalSchema, quoteReceiptParamsSchema, quoteReceiptSchema, receivablesQuerySchema } from './receivables.schemas';
 import { listReceivables, receiveQuote, reversePayment } from './receivables.service';
 
@@ -117,6 +118,10 @@ router.get('/resultados', asyncHandler(async (req, res) => {
 
 router.get('/painel-estrategico', asyncHandler(async (req, res) => {
   res.json({ success: true, ...(await getStrategicDashboard(req.auth!, reportQuerySchema.parse(req.query))) });
+}));
+
+router.get('/painel-estrategico/categorias/detalhes', asyncHandler(async (req, res) => {
+  res.json({ success: true, ...(await listStrategicCategoryProcedures(req.auth!, strategicCategoryDetailQuerySchema.parse(req.query))) });
 }));
 
 router.get(

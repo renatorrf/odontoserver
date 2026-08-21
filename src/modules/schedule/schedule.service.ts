@@ -299,12 +299,15 @@ async function syncConsultationQuote(
   const createdFinancialTitle = await client.query<{ id: string }>(
     `insert into odonto.paciente_financeiro_lancamentos (
        empresa_id, paciente_id, orcamento_id, descricao, vencimento, valor, created_by, updated_by
-     ) select $1, $2, $3, 'Orcamento #' || upper(substr($3::text, 1, 8)), $4::date,
+     ) select $1::uuid, $2::uuid, $3::uuid,
+              'Orcamento #' || upper(substr($3::uuid::text, 1, 8)), $4::date,
               coalesce(sum(valor_total), 0), $5, $5
          from odonto.orcamento_itens
-        where orcamento_id = $3
+        where orcamento_id = $3::uuid
           and not exists (select 1 from odonto.paciente_financeiro_lancamentos fl
-            where fl.empresa_id = $1 and fl.orcamento_id = $3 and fl.status <> 'cancelado')
+            where fl.empresa_id = $1::uuid
+              and fl.orcamento_id = $3::uuid
+              and fl.status <> 'cancelado')
        having coalesce(sum(valor_total), 0) > 0
        returning id`,
     [auth.empresaId, input.pacienteId, quoteId, input.inicioEm.slice(0, 10), auth.usuarioId],
@@ -715,13 +718,23 @@ export async function updateEventStatus(
       ) values ($1, $2, $3, $4, $5, $6)`,
       [auth.empresaId, id, current, input.status, optionalText(input.justificativa), auth.usuarioId],
     );
+    if (['atendido', 'concluido'].includes(input.status)) {
+      await client.query(
+        `insert into odonto.audit_logs (empresa_id,usuario_id,entidade,entidade_id,acao,payload)
+         values ($1,$2,'agenda_eventos',$3,'conclusao_procedimento',$4::jsonb)`,
+        [auth.empresaId, auth.usuarioId, id, JSON.stringify({ statusAnterior: current, statusNovo: input.status })],
+      );
+    }
   });
 }
 
 export async function listReturnAlerts(auth: AuthContext, input: ReturnAlertQuery) {
   const result = await query<AlertRow>(
     `
-      select ar.*, pac.nome as paciente_nome, p.nome as profissional_nome
+      select ar.id, ar.paciente_id, ar.profissional_id, ar.motivo,
+             ar.retornar_em::text as retornar_em, ar.observacoes,
+             ar.status::text as status, ar.agenda_evento_id,
+             pac.nome as paciente_nome, p.nome as profissional_nome
         from odonto.alertas_retorno ar
         join odonto.pacientes pac on pac.id = ar.paciente_id and pac.empresa_id = ar.empresa_id
         left join odonto.profissionais p on p.id = ar.profissional_id and p.empresa_id = ar.empresa_id
@@ -772,7 +785,10 @@ export async function createReturnAlert(auth: AuthContext, input: ReturnAlertInp
 
   const result = await query<AlertRow>(
     `
-      select ar.*, pac.nome as paciente_nome, p.nome as profissional_nome
+      select ar.id, ar.paciente_id, ar.profissional_id, ar.motivo,
+             ar.retornar_em::text as retornar_em, ar.observacoes,
+             ar.status::text as status, ar.agenda_evento_id,
+             pac.nome as paciente_nome, p.nome as profissional_nome
         from odonto.alertas_retorno ar
         join odonto.pacientes pac on pac.id = ar.paciente_id and pac.empresa_id = ar.empresa_id
         left join odonto.profissionais p on p.id = ar.profissional_id and p.empresa_id = ar.empresa_id

@@ -105,6 +105,15 @@ export const reportQuerySchema = z.object({
   message: 'A data final deve ser posterior a inicial.',
 });
 
+export const strategicCategoryDetailQuerySchema = z.object({
+  inicio: date,
+  fim: date,
+  categoria: z.string().trim().min(1).max(80),
+}).refine((value) => value.inicio <= value.fim, {
+  path: ['fim'],
+  message: 'A data final deve ser posterior a inicial.',
+});
+
 export const operationalCostConfigSchema = z.object({
   quantidadeCadeiras: z.coerce.number().int().min(1).max(100),
   horasProdutivasCadeiraMes: z.coerce.number().positive().max(744),
@@ -116,4 +125,5 @@ export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;
 export type ExpensePaymentInput = z.infer<typeof expensePaymentSchema>;
 export type ReportQuery = z.infer<typeof reportQuerySchema>;
+export type StrategicCategoryDetailQuery = z.infer<typeof strategicCategoryDetailQuerySchema>;
 export type OperationalCostConfigInput = z.infer<typeof operationalCostConfigSchema>;

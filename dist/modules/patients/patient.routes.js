@@ -13,6 +13,9 @@ const patient_tabs_schemas_1 = require("./patient-tabs.schemas");
 const patient_tabs_service_1 = require("./patient-tabs.service");
 const router = (0, express_1.Router)();
 const documentUpload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+router.get('/apoio/medicamentos', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    res.json({ success: true, medicamentos: await (0, patient_tabs_service_1.listMedications)(req.auth) });
+}));
 router.get('/', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const query = patient_schemas_1.patientListQuerySchema.parse(req.query);
     const patients = await (0, patient_service_1.listPatients)(req.auth, query);
@@ -61,6 +64,19 @@ router.get('/:id/documentos', (0, async_handler_1.asyncHandler)(async (req, res)
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, documentos: await (0, patient_tabs_service_1.listPatientDocuments)(req.auth, id) });
 }));
+router.get('/:id/documentos-clinicos', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
+    res.json({ success: true, documentos: await (0, patient_tabs_service_1.listClinicalDocuments)(req.auth, id) });
+}));
+router.post('/:id/documentos-clinicos', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, async_handler_1.asyncHandler)(async (req, res) => {
+    const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
+    res.status(201).json({ success: true, documento: await (0, patient_tabs_service_1.createClinicalDocument)(req.auth, id, patient_tabs_schemas_1.clinicalDocumentSchema.parse(req.body)) });
+}));
+router.put('/:id/documentos-clinicos/:documentId', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, async_handler_1.asyncHandler)(async (req, res) => {
+    const { id, documentId } = patient_tabs_schemas_1.patientDocumentParamsSchema.parse(req.params);
+    await (0, patient_tabs_service_1.updateClinicalDocument)(req.auth, id, documentId, patient_tabs_schemas_1.clinicalDocumentSchema.parse(req.body));
+    res.json({ success: true, message: 'Documento clinico atualizado.' });
+}));
 router.post('/:id/documentos', documentUpload.single('arquivo'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     const documento = await (0, patient_tabs_service_1.savePatientDocument)(req.auth, id, req.file, patient_tabs_schemas_1.patientDocumentMetadataSchema.parse(req.body));
@@ -95,6 +111,10 @@ router.get('/:id/agendamentos', (0, async_handler_1.asyncHandler)(async (req, re
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     const input = patient_tabs_schemas_1.patientAppointmentsQuerySchema.parse(req.query);
     res.json({ success: true, agendamentos: await (0, patient_tabs_service_1.listPatientAppointments)(req.auth, id, input) });
+}));
+router.get('/:id/timeline', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
+    res.json({ success: true, timeline: await (0, patient_tabs_service_1.listPatientTimeline)(req.auth, id) });
 }));
 router.get('/:id', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const params = patient_schemas_1.patientIdParamSchema.parse(req.params);
