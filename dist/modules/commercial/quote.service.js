@@ -7,6 +7,9 @@ exports.updateQuote = updateQuote;
 exports.updateQuoteStatus = updateQuoteStatus;
 exports.sendQuote = sendQuote;
 exports.approveAndScheduleQuote = approveAndScheduleQuote;
+const node_crypto_1 = require("node:crypto");
+const dental_rules_1 = require("../dental/dental.rules");
+const dental_service_1 = require("../dental/dental.service");
 const pool_1 = require("../../database/pool");
 const whatsapp_service_1 = require("../../services/whatsapp.service");
 const http_error_1 = require("../../utils/http-error");
@@ -102,12 +105,21 @@ async function validateQuote(auth, input, client) {
         }
     }
     const procedureIds = [...new Set(input.itens.map((item) => item.catalogoProcedimentoId))];
-    const procedures = await client.query(`select id, nome, duracao_minutos from odonto.catalogo_procedimentos where empresa_id = $1 and id = any($2::uuid[])`, [auth.empresaId, procedureIds]);
+    const procedures = await client.query(`select id, nome, duracao_minutos, extracao, forma_cobranca from odonto.catalogo_procedimentos where empresa_id = $1 and id = any($2::uuid[])`, [auth.empresaId, procedureIds]);
     if (procedures.rows.length !== procedureIds.length) {
         throw (0, http_error_1.notFound)('Um ou mais procedimentos do orcamento nao foram encontrados.');
     }
     const byId = new Map(procedures.rows.map((procedure) => [procedure.id, procedure]));
+    const snapshots = await client.query('select id,extracao,forma_cobranca,catalogo_procedimento_id from odonto.orcamento_itens where empresa_id=$1 and id=any($2::uuid[])', [auth.empresaId, input.itens.flatMap((i) => i.id ? [i.id] : [])]);
+    const config = (item) => snapshots.rows.find((r) => r.id === item.id && r.catalogo_procedimento_id === item.catalogoProcedimentoId) ?? byId.get(item.catalogoProcedimentoId);
+    for (const item of input.itens)
+        (0, dental_rules_1.dentalQuantity)(config(item), item.dentes, item.quantidade);
     const items = input.itens.map((item, index) => ({
+        id: item.id,
+        dentes: item.dentes,
+        justificativaDentes: item.justificativaDentes,
+        extracao: config(item).extracao,
+        formaCobranca: config(item).forma_cobranca,
         catalogoProcedimentoId: item.catalogoProcedimentoId,
         descricao: byId.get(item.catalogoProcedimentoId).nome,
         quantidade: item.quantidade,
@@ -129,29 +141,64 @@ async function validateQuote(auth, input, client) {
     }
     return items;
 }
-async function replaceItems(client, quoteId, items) {
-    await client.query('delete from odonto.orcamento_itens where orcamento_id = $1', [quoteId]);
+async function replaceItems(client, auth, quoteId, patientId, items) {
+    const existing = await client.query('select * from odonto.orcamento_itens where orcamento_id=$1 and empresa_id=$2 for update', [quoteId, auth.empresaId]);
+    const kept = items.flatMap((item) => item.id ? [item.id] : []);
+    if (new Set(kept).size !== kept.length || kept.some((id) => !existing.rows.some((row) => row.id === id)))
+        throw (0, http_error_1.badRequest)('Item de orcamento invalido.');
+    const completed = existing.rows.some((row) => row.status === 'concluido');
+    const linked = await client.query('select 1 from odonto.agenda_evento_procedimentos where empresa_id=$1 and orcamento_item_id=any($2::uuid[]) limit 1', [auth.empresaId, existing.rows.map((row) => row.id)]);
+    if (linked.rowCount || completed) {
+        if (items.length !== existing.rows.length)
+            throw (0, http_error_1.conflict)('Composicao ja agendada: altere pelo agendamento.');
+        for (const item of items) {
+            const row = existing.rows.find((r) => r.id === item.id);
+            if (!row || row.catalogo_procedimento_id !== item.catalogoProcedimentoId || row.quantidade !== item.quantidade ||
+                Number(row.valor_unitario) !== item.valorUnitario || row.cortesia !== item.cortesia || Number(row.desconto_valor) !== item.descontoValor ||
+                !(0, dental_rules_1.sameTeeth)(await (0, dental_service_1.readTeeth)(client, auth, 'orcamento_item_id', row.id), item.dentes))
+                throw (0, http_error_1.conflict)('Composicao ja agendada ou concluida: altere pelo agendamento ou use a correcao clinica justificada.');
+        }
+        return;
+    }
+    for (const row of existing.rows.filter((row) => !kept.includes(row.id))) {
+        await (0, dental_service_1.writeTeeth)(client, auth, 'orcamento_item_id', row.id, patientId, [], { orcamentoId: quoteId });
+        await client.query('delete from odonto.orcamento_itens where id=$1 and empresa_id=$2', [row.id, auth.empresaId]);
+    }
+    const selected = items.flatMap((item) => item.dentes.map((tooth) => tooth.numero));
+    if (new Set(selected).size !== selected.length)
+        throw (0, http_error_1.badRequest)('Um dente esta repetido entre os procedimentos de extracao.');
     for (const item of items) {
+        await (0, dental_service_1.checkPlannedTeeth)(client, auth, patientId, item.dentes, quoteId, item.justificativaDentes);
+        const id = item.id ?? (0, node_crypto_1.randomUUID)();
         await client.query(`
         insert into odonto.orcamento_itens (
           orcamento_id, catalogo_procedimento_id, descricao, quantidade,
           valor_unitario, valor_total, ordem
           ,duracao_minutos, cortesia, cortesia_justificativa, cortesia_autorizada_por,
-          desconto_valor, desconto_justificativa
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          desconto_valor, desconto_justificativa, id, empresa_id, extracao, forma_cobranca
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        on conflict (id) do update set descricao=excluded.descricao, catalogo_procedimento_id=excluded.catalogo_procedimento_id,
+          quantidade=excluded.quantidade,valor_unitario=excluded.valor_unitario,valor_total=excluded.valor_total,ordem=excluded.ordem,
+          duracao_minutos=excluded.duracao_minutos,cortesia=excluded.cortesia,cortesia_justificativa=excluded.cortesia_justificativa,
+          cortesia_autorizada_por=excluded.cortesia_autorizada_por,desconto_valor=excluded.desconto_valor,
+          desconto_justificativa=excluded.desconto_justificativa,extracao=excluded.extracao,forma_cobranca=excluded.forma_cobranca
       `, [quoteId, item.catalogoProcedimentoId, item.descricao, item.quantidade, item.valorUnitario, item.valorTotal, item.ordem, item.duracaoMinutos,
-            item.cortesia, item.cortesiaJustificativa, item.cortesia ? item.autorizadoPor : null, item.descontoValor, item.descontoJustificativa]);
+            item.cortesia, item.cortesiaJustificativa, item.cortesia ? item.autorizadoPor : null, item.descontoValor, item.descontoJustificativa,
+            id, auth.empresaId, item.extracao, item.formaCobranca]);
+        await (0, dental_service_1.writeTeeth)(client, auth, 'orcamento_item_id', id, patientId, item.dentes, { orcamentoId: quoteId, procedimentoId: item.catalogoProcedimentoId }, item.justificativaDentes);
     }
 }
 async function listQuotes(auth, input) {
-    const search = `%${input.search}%`;
+    const search = `%${input.search.trim().replace(/\s+/g, ' ')}%`;
     const result = await (0, pool_1.query)(`${quoteSelect()}
       where o.empresa_id = $1
         and ($2 = 'todos' or o.status::text = $2)
-        and ($3 = '%%' or o.nome_contato ilike $3 or o.whatsapp ilike $3)
-      order by o.updated_at desc
-      limit 200`, [auth.empresaId, input.status, search]);
-    return { orcamentos: result.rows.map(mapQuote) };
+        and ($3 = '%%' or odonto.search_text(o.nome_contato) like odonto.search_text($3) or o.whatsapp ilike $3 or substr(o.id::text,1,8) ilike $3)
+        and ($4::date is null or o.created_at >= $4::date)
+        and ($5::date is null or o.created_at < $5::date + interval '1 day')
+      order by o.created_at desc, o.id desc
+      limit $6 offset $7`, [auth.empresaId, input.status, search, input.inicio ?? null, input.fim ?? null, input.limite + 1, (input.pagina - 1) * input.limite]);
+    return { orcamentos: result.rows.slice(0, input.limite).map(mapQuote), pagina: input.pagina, temMais: result.rows.length > input.limite };
 }
 async function getQuote(auth, quoteId) {
     const result = await (0, pool_1.query)(`${quoteSelect()} where o.id = $1 and o.empresa_id = $2 limit 1`, [quoteId, auth.empresaId]);
@@ -162,7 +209,7 @@ async function getQuote(auth, quoteId) {
     const items = await (0, pool_1.query)(`
       select id, catalogo_procedimento_id, descricao, quantidade::text,
              valor_unitario::text, valor_total::text, ordem::text, duracao_minutos::text,
-             cortesia, cortesia_justificativa, desconto_valor::text, desconto_justificativa, status::text
+             cortesia, cortesia_justificativa, desconto_valor::text, desconto_justificativa, status::text, extracao, forma_cobranca
         from odonto.orcamento_itens
        where orcamento_id = $1
        order by ordem, created_at
@@ -175,7 +222,9 @@ async function getQuote(auth, quoteId) {
      order by a.created_at desc limit 100`, [auth.empresaId, quoteId]);
     return {
         ...mapQuote(row),
-        itens: items.rows.map((item) => ({
+        itens: await Promise.all(items.rows.map(async (item) => ({
+            dentes: await (0, dental_service_1.readTeeth)({ query: pool_1.query }, auth, 'orcamento_item_id', item.id),
+            extracao: item.extracao, formaCobranca: item.forma_cobranca,
             id: item.id,
             catalogoProcedimentoId: item.catalogo_procedimento_id,
             descricao: item.descricao,
@@ -189,7 +238,7 @@ async function getQuote(auth, quoteId) {
             descontoValor: Number(item.desconto_valor),
             descontoJustificativa: item.desconto_justificativa,
             status: item.status,
-        })),
+        }))),
         historico: history.rows.map((item) => ({ id: item.id, acao: item.acao, detalhes: item.payload,
             responsavelNome: item.usuario_nome, criadoEm: item.created_at })),
     };
@@ -215,7 +264,7 @@ async function createQuote(auth, input) {
             input.descontoPercentual ?? null, input.descontoJustificativa ?? null,
             input.observacoes ?? null, input.motivoNaoAprovacao ?? null, auth.usuarioId,
         ]);
-        await replaceItems(client, result.rows[0].id, items);
+        await replaceItems(client, auth, result.rows[0].id, input.pacienteId ?? null, items);
         await client.query(`insert into odonto.audit_logs (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
       values ($1,$2,'orcamento',$3,'orcamento_criado',$4::jsonb)`, [auth.empresaId, auth.usuarioId, result.rows[0].id,
             JSON.stringify({ perfil: auth.perfil, pacienteId: input.pacienteId ?? null, origem: input.origem,
@@ -233,7 +282,7 @@ async function createQuote(auth, input) {
 }
 async function updateQuote(auth, quoteId, input) {
     await (0, pool_1.transaction)(async (client) => {
-        const current = await client.query('select status::text from odonto.orcamentos where id = $1 and empresa_id = $2 for update', [quoteId, auth.empresaId]);
+        const current = await client.query('select status::text, paciente_id from odonto.orcamentos where id = $1 and empresa_id = $2 for update', [quoteId, auth.empresaId]);
         if (!current.rowCount) {
             throw (0, http_error_1.notFound)('Orcamento nao encontrado.');
         }
@@ -243,6 +292,11 @@ async function updateQuote(auth, quoteId, input) {
         where fl.empresa_id = $1 and fl.orcamento_id = $2 and pg.estornado_em is null limit 1`, [auth.empresaId, quoteId]);
             if (payments.rowCount)
                 throw (0, http_error_1.badRequest)('Estorne ou ajuste os recebimentos antes de transformar procedimento em cortesia.');
+        }
+        if (current.rows[0].paciente_id !== (input.pacienteId ?? null)) {
+            const linked = await client.query('select 1 from odonto.agenda_eventos where empresa_id=$1 and orcamento_id=$2 limit 1', [auth.empresaId, quoteId]);
+            if (linked.rowCount || ['concluido', 'em_execucao'].includes(current.rows[0].status))
+                throw (0, http_error_1.conflict)('Nao e permitido trocar o paciente de um orcamento vinculado ao atendimento.');
         }
         const items = await validateQuote(auth, input, client);
         await client.query(`
@@ -258,7 +312,7 @@ async function updateQuote(auth, quoteId, input) {
       `, [quoteId, auth.empresaId, input.pacienteId ?? null, input.nomeContato, input.whatsapp, input.origem,
             input.status, input.validade ?? null, input.descontoValor, input.descontoTipo, input.descontoPercentual ?? null,
             input.descontoJustificativa ?? null, input.observacoes ?? null, input.motivoNaoAprovacao ?? null, auth.usuarioId]);
-        await replaceItems(client, quoteId, items);
+        await replaceItems(client, auth, quoteId, input.pacienteId ?? null, items);
         await client.query(`insert into odonto.audit_logs (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
       values ($1,$2,'orcamento',$3,'orcamento_alterado',$4::jsonb)`, [auth.empresaId, auth.usuarioId, quoteId,
             JSON.stringify({ perfil: auth.perfil, pacienteId: input.pacienteId ?? null, origem: input.origem,
@@ -405,7 +459,7 @@ async function approveAndScheduleQuote(auth, quoteId, input) {
                 cpf: input.cpf,
                 celular: quote.whatsapp,
             });
-            const itemsResult = await client.query(`select catalogo_procedimento_id, descricao, quantidade, valor_total::text, duracao_minutos
+            const itemsResult = await client.query(`select id, extracao, forma_cobranca, catalogo_procedimento_id, descricao, quantidade, valor_total::text, duracao_minutos
            from odonto.orcamento_itens where orcamento_id = $1 order by ordem, created_at`, [quoteId]);
             if (!itemsResult.rowCount)
                 throw (0, http_error_1.badRequest)('O orcamento nao possui procedimentos.');
@@ -434,11 +488,16 @@ async function approveAndScheduleQuote(auth, quoteId, input) {
           empresa_id, agenda_evento_id, status_anterior, status_novo, created_by
         ) values ($1, $2, null, 'agendado', $3)`, [auth.empresaId, eventId, auth.usuarioId]);
             for (const item of itemsResult.rows) {
-                await client.query(`insert into odonto.agenda_evento_procedimentos (
+                const teeth = await (0, dental_service_1.readTeeth)(client, auth, 'orcamento_item_id', item.id);
+                (0, dental_rules_1.dentalQuantity)(item, teeth, item.quantidade);
+                await (0, dental_service_1.checkPlannedTeeth)(client, auth, patient.id, teeth, quoteId, input.justificativaDentes);
+                await (0, dental_service_1.writeTeeth)(client, auth, 'orcamento_item_id', item.id, patient.id, teeth, { orcamentoId: quoteId });
+                const agendaItem = await client.query(`insert into odonto.agenda_evento_procedimentos (
             empresa_id, agenda_evento_id, catalogo_procedimento_id, descricao, valor,
-            quantidade, duracao_minutos
-          ) values ($1, $2, $3, $4, $5, $6, $7)`, [auth.empresaId, eventId, item.catalogo_procedimento_id, item.descricao,
-                    item.valor_total, item.quantidade, item.duracao_minutos * item.quantidade]);
+            quantidade, duracao_minutos,orcamento_item_id,extracao,forma_cobranca
+          ) values ($1, $2, $3, $4, $5, $6, $7,$8,$9,$10) returning id`, [auth.empresaId, eventId, item.catalogo_procedimento_id, item.descricao,
+                    item.valor_total, item.quantidade, item.duracao_minutos * item.quantidade, item.id, item.extracao, item.forma_cobranca]);
+                await (0, dental_service_1.writeTeeth)(client, auth, 'agenda_item_id', agendaItem.rows[0].id, patient.id, teeth, { orcamentoId: quoteId, agendamentoId: eventId });
             }
             await client.query(`update odonto.orcamentos
             set paciente_id = $3, profissional_id = $4, status = 'aprovado', aprovado_em = now(), updated_by = $5

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.operationalCostConfigSchema = exports.strategicCategoryDetailQuerySchema = exports.reportQuerySchema = exports.expensePaymentSchema = exports.deleteExpenseQuerySchema = exports.updateExpenseSchema = exports.expenseSchema = exports.expenseQuerySchema = exports.entityIdSchema = exports.bankSchema = exports.paymentMethodSchema = exports.expenseCategories = void 0;
+exports.operationalCostConfigSchema = exports.strategicCategoryDetailQuerySchema = exports.strategicDashboardQuerySchema = exports.reportQuerySchema = exports.expensePaymentSchema = exports.deleteExpenseQuerySchema = exports.updateExpenseSchema = exports.expenseSchema = exports.expenseQuerySchema = exports.entityIdSchema = exports.bankSchema = exports.paymentMethodSchema = exports.expenseCategories = void 0;
 const zod_1 = require("zod");
 const date = zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const optionalText = zod_1.z.preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), zod_1.z.string().trim().optional());
@@ -90,6 +90,9 @@ exports.reportQuerySchema = zod_1.z.object({
     path: ['fim'],
     message: 'A data final deve ser posterior a inicial.',
 });
+exports.strategicDashboardQuerySchema = exports.reportQuerySchema.and(zod_1.z.object({
+    granularidade: zod_1.z.enum(['dia', 'mes']).optional(),
+}));
 exports.strategicCategoryDetailQuerySchema = zod_1.z.object({
     inicio: date,
     fim: date,

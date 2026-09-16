@@ -105,6 +105,10 @@ export const reportQuerySchema = z.object({
   message: 'A data final deve ser posterior a inicial.',
 });
 
+export const strategicDashboardQuerySchema = reportQuerySchema.and(z.object({
+  granularidade: z.enum(['dia', 'mes']).optional(),
+}));
+
 export const strategicCategoryDetailQuerySchema = z.object({
   inicio: date,
   fim: date,
@@ -125,5 +129,6 @@ export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 export type ExpenseQuery = z.infer<typeof expenseQuerySchema>;
 export type ExpensePaymentInput = z.infer<typeof expensePaymentSchema>;
 export type ReportQuery = z.infer<typeof reportQuerySchema>;
+export type StrategicDashboardQuery = z.infer<typeof strategicDashboardQuerySchema>;
 export type StrategicCategoryDetailQuery = z.infer<typeof strategicCategoryDetailQuerySchema>;
 export type OperationalCostConfigInput = z.infer<typeof operationalCostConfigSchema>;

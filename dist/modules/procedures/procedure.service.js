@@ -7,8 +7,10 @@ exports.updateCatalogProcedure = updateCatalogProcedure;
 exports.updateCatalogProcedureStatus = updateCatalogProcedureStatus;
 exports.listProcedures = listProcedures;
 exports.createProcedure = createProcedure;
-const pool_1 = require("../../database/pool");
+const dental_rules_1 = require("../dental/dental.rules");
 const http_error_1 = require("../../utils/http-error");
+const pool_1 = require("../../database/pool");
+const http_error_2 = require("../../utils/http-error");
 const normalize_1 = require("../../utils/normalize");
 function mapCatalogProcedure(row) {
     return {
@@ -21,6 +23,9 @@ function mapCatalogProcedure(row) {
         valor: Number(row.valor),
         custoVariavel: Number(row.custo_variavel),
         ativo: row.ativo,
+        extracao: row.extracao,
+        formaCobranca: row.forma_cobranca,
+        tipoEventoOrtodontico: row.tipo_evento_ortodontico,
         criadoEm: row.created_at,
         atualizadoEm: row.updated_at,
     };
@@ -31,33 +36,35 @@ function isUniqueViolation(error) {
 async function listCatalogProcedures(auth, input) {
     const search = (0, normalize_1.optionalText)(input.search);
     const result = await (0, pool_1.query)(`
-      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at
+      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at, extracao, forma_cobranca, tipo_evento_ortodontico
         from odonto.catalogo_procedimentos
        where empresa_id = $1
-         and ($2::text is null or nome ilike '%' || $2 || '%' or codigo ilike '%' || $2 || '%' or categoria ilike '%' || $2 || '%')
+         and ($2::text is null or odonto.search_text(nome) like '%' || odonto.search_text($2) || '%' or codigo ilike '%' || $2 || '%' or odonto.search_text(categoria) like '%' || odonto.search_text($2) || '%')
          and ($3 = 'todos' or ($3 = 'ativos' and ativo = true) or ($3 = 'inativos' and ativo = false))
        order by ativo desc, nome
+       limit 200
     `, [auth.empresaId, search, input.status]);
     return result.rows.map(mapCatalogProcedure);
 }
 async function getCatalogProcedure(auth, id) {
     const result = await (0, pool_1.query)(`
-      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at
+      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at, extracao, forma_cobranca, tipo_evento_ortodontico
         from odonto.catalogo_procedimentos
        where id = $1 and empresa_id = $2
        limit 1
     `, [id, auth.empresaId]);
     if (!result.rowCount) {
-        throw (0, http_error_1.notFound)('Procedimento nao encontrado.');
+        throw (0, http_error_2.notFound)('Procedimento nao encontrado.');
     }
     return mapCatalogProcedure(result.rows[0]);
 }
 async function createCatalogProcedure(auth, input) {
+    (0, dental_rules_1.assertClinical)(auth);
     try {
         const result = await (0, pool_1.query)(`
         insert into odonto.catalogo_procedimentos (
-          empresa_id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_by, updated_by
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+          empresa_id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_by, updated_by, extracao, forma_cobranca, tipo_evento_ortodontico
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13)
         returning id
       `, [
             auth.empresaId,
@@ -69,18 +76,19 @@ async function createCatalogProcedure(auth, input) {
             input.valor,
             input.custoVariavel,
             input.ativo,
-            auth.usuarioId,
+            auth.usuarioId, input.extracao, input.formaCobranca, input.tipoEventoOrtodontico,
         ]);
         return getCatalogProcedure(auth, result.rows[0].id);
     }
     catch (error) {
         if (isUniqueViolation(error)) {
-            throw (0, http_error_1.conflict)('Ja existe um procedimento com este nome ou codigo.');
+            throw (0, http_error_2.conflict)('Ja existe um procedimento com este nome ou codigo.');
         }
         throw error;
     }
 }
 async function updateCatalogProcedure(auth, id, input) {
+    (0, dental_rules_1.assertClinical)(auth);
     try {
         const result = await (0, pool_1.query)(`
         update odonto.catalogo_procedimentos set
@@ -92,7 +100,7 @@ async function updateCatalogProcedure(auth, id, input) {
           valor = $8,
           custo_variavel = $9,
           ativo = $10,
-          updated_by = $11
+          updated_by = $11, extracao=$12, forma_cobranca=$13, tipo_evento_ortodontico=$14
         where id = $1 and empresa_id = $2
       `, [
             id,
@@ -105,16 +113,16 @@ async function updateCatalogProcedure(auth, id, input) {
             input.valor,
             input.custoVariavel,
             input.ativo,
-            auth.usuarioId,
+            auth.usuarioId, input.extracao, input.formaCobranca, input.tipoEventoOrtodontico,
         ]);
         if (!result.rowCount) {
-            throw (0, http_error_1.notFound)('Procedimento nao encontrado.');
+            throw (0, http_error_2.notFound)('Procedimento nao encontrado.');
         }
         return getCatalogProcedure(auth, id);
     }
     catch (error) {
         if (isUniqueViolation(error)) {
-            throw (0, http_error_1.conflict)('Ja existe um procedimento com este nome ou codigo.');
+            throw (0, http_error_2.conflict)('Ja existe um procedimento com este nome ou codigo.');
         }
         throw error;
     }
@@ -122,7 +130,7 @@ async function updateCatalogProcedure(auth, id, input) {
 async function updateCatalogProcedureStatus(auth, id, input) {
     const result = await (0, pool_1.query)(`update odonto.catalogo_procedimentos set ativo = $3, updated_by = $4 where id = $1 and empresa_id = $2`, [id, auth.empresaId, input.ativo, auth.usuarioId]);
     if (!result.rowCount) {
-        throw (0, http_error_1.notFound)('Procedimento nao encontrado.');
+        throw (0, http_error_2.notFound)('Procedimento nao encontrado.');
     }
 }
 async function listProcedures(auth, params) {
@@ -131,7 +139,7 @@ async function listProcedures(auth, params) {
         auth.empresaId,
     ]);
     if (!patientResult.rows.length) {
-        throw (0, http_error_1.notFound)('Paciente nao encontrado.');
+        throw (0, http_error_2.notFound)('Paciente nao encontrado.');
     }
     const result = await (0, pool_1.query)(`
       select
@@ -158,24 +166,27 @@ async function listProcedures(auth, params) {
     }));
 }
 async function createProcedure(auth, input) {
+    (0, dental_rules_1.assertClinical)(auth);
     return (0, pool_1.transaction)(async (client) => {
         const patientResult = await client.query('select id from odonto.pacientes where id = $1 and empresa_id = $2 limit 1', [input.pacienteId, auth.empresaId]);
         if (!patientResult.rows.length) {
-            throw (0, http_error_1.notFound)('Paciente nao encontrado.');
+            throw (0, http_error_2.notFound)('Paciente nao encontrado.');
         }
         let professionalName = (0, normalize_1.optionalText)(input.profissionalNome);
         if (input.profissionalId) {
             const professionalResult = await client.query('select nome from odonto.profissionais where id = $1 and empresa_id = $2 limit 1', [input.profissionalId, auth.empresaId]);
             if (!professionalResult.rowCount) {
-                throw (0, http_error_1.notFound)('Profissional nao encontrado.');
+                throw (0, http_error_2.notFound)('Profissional nao encontrado.');
             }
             professionalName = professionalResult.rows[0].nome;
         }
         if (input.catalogoProcedimentoId) {
-            const catalogResult = await client.query('select 1 from odonto.catalogo_procedimentos where id = $1 and empresa_id = $2 limit 1', [input.catalogoProcedimentoId, auth.empresaId]);
+            const catalogResult = await client.query('select extracao from odonto.catalogo_procedimentos where id = $1 and empresa_id = $2 limit 1', [input.catalogoProcedimentoId, auth.empresaId]);
             if (!catalogResult.rowCount) {
-                throw (0, http_error_1.notFound)('Procedimento do catalogo nao encontrado.');
+                throw (0, http_error_2.notFound)('Procedimento do catalogo nao encontrado.');
             }
+            if (catalogResult.rows[0].extracao)
+                throw (0, http_error_1.badRequest)('Registre a extracao pelo atendimento, confirmando os dentes executados.');
         }
         const result = await client.query(`
         insert into odonto.procedimentos_realizados (

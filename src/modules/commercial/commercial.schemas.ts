@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { teethSchema } from '../dental/dental.rules';
 
 export const redFolderQuerySchema = z.object({
   dias: z.coerce.number().int().refine((value) => [30, 60, 90].includes(value), 'Periodo invalido.').default(30),
@@ -17,7 +18,11 @@ export const quoteIdSchema = z.object({ id: z.string().uuid() });
 
 export const quoteListQuerySchema = z.object({
   search: z.string().trim().max(120).default(''),
-  status: z.enum(['todos', 'rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado']).default('todos'),
+  inicio: z.string().date().optional(),
+  fim: z.string().date().optional(),
+  pagina: z.coerce.number().int().min(1).default(1),
+  limite: z.coerce.number().int().min(1).max(100).default(25),
+  status: z.enum(['todos', 'rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado', 'em_execucao', 'concluido', 'aguardando_aprovacao', 'recusado']).default('todos'),
 });
 
 const nullableText = (max: number) => z.string().trim().max(max).nullable().optional();
@@ -33,7 +38,7 @@ export const quotePayloadSchema = z.object({
     'WhatsApp invalido.',
   ),
   origem: z.enum(['rapido', 'pasta_vermelha', 'consulta']).default('rapido'),
-  status: z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado']).default('rascunho'),
+  status: z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado', 'em_execucao', 'concluido', 'aguardando_aprovacao', 'recusado']).default('rascunho'),
   validade: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   descontoValor: z.coerce.number().min(0).max(99999999.99).default(0),
   descontoTipo: z.enum(['valor', 'percentual']).default('valor'),
@@ -42,6 +47,9 @@ export const quotePayloadSchema = z.object({
   observacoes: nullableText(3000),
   motivoNaoAprovacao: nullableText(1000),
   itens: z.array(z.object({
+    id: z.string().uuid().optional(),
+    dentes: teethSchema.default([]),
+    justificativaDentes: nullableText(1000),
     catalogoProcedimentoId: z.string().uuid(),
     quantidade: z.coerce.number().int().min(1).max(99).default(1),
     valorUnitario: z.coerce.number().min(0).max(99999999.99),
@@ -62,7 +70,7 @@ export const quotePayloadSchema = z.object({
 });
 
 export const quoteStatusSchema = z.object({
-  status: z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado']),
+  status: z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado', 'em_execucao', 'concluido', 'aguardando_aprovacao', 'recusado']),
   motivoNaoAprovacao: nullableText(1000),
 });
 
@@ -72,6 +80,7 @@ export const quoteSendSchema = z.object({
 });
 
 export const quoteScheduleSchema = z.object({
+  justificativaDentes: nullableText(1000),
   profissionalId: z.string().uuid(),
   inicioEm: z.string().datetime({ offset: true }),
   diaInteiro: z.boolean().default(false),

@@ -3,6 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const zod_1 = require("zod");
+const dental_service_1 = require("../dental/dental.service");
 const express_1 = require("express");
 const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("../../middlewares/auth");
@@ -36,13 +38,19 @@ router.get('/:id/resumo-abas', (0, async_handler_1.asyncHandler)(async (req, res
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, ...(await (0, patient_tabs_service_1.getPatientTabSummary)(req.auth, id)) });
 }));
+router.get('/:id/dentes', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
+    const { orcamentoId } = zod_1.z.object({ orcamentoId: zod_1.z.string().uuid().optional() }).parse(req.query);
+    res.json({ success: true, ...await (0, dental_service_1.patientDentalContext)(req.auth, id, orcamentoId) });
+}));
 router.get('/:id/orcamentos', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, orcamentos: await (0, patient_tabs_service_1.listPatientQuotes)(req.auth, id) });
 }));
 router.post('/:id/orcamentos/:quoteId/duplicar', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id, quoteId } = patient_tabs_schemas_1.patientQuoteParamsSchema.parse(req.params);
-    const orcamento = await (0, patient_tabs_service_1.duplicatePatientQuote)(req.auth, id, quoteId);
+    const { justificativa } = zod_1.z.object({ justificativa: zod_1.z.string().trim().max(1000).optional() }).parse(req.body);
+    const orcamento = await (0, patient_tabs_service_1.duplicatePatientQuote)(req.auth, id, quoteId, justificativa);
     res.status(201).json({ success: true, orcamento });
 }));
 router.patch('/:id/orcamentos/:quoteId/itens/:itemId/status', (0, async_handler_1.asyncHandler)(async (req, res) => {

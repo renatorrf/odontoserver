@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.quoteScheduleSchema = exports.quoteSendSchema = exports.quoteStatusSchema = exports.quotePayloadSchema = exports.quoteListQuerySchema = exports.quoteIdSchema = exports.retentionContactSchema = exports.redFolderPatientSchema = exports.redFolderQuerySchema = void 0;
 const zod_1 = require("zod");
+const dental_rules_1 = require("../dental/dental.rules");
 exports.redFolderQuerySchema = zod_1.z.object({
     dias: zod_1.z.coerce.number().int().refine((value) => [30, 60, 90].includes(value), 'Periodo invalido.').default(30),
     tipo: zod_1.z.enum(['todos', 'inativos', 'orcamentos']).default('todos'),
@@ -15,7 +16,11 @@ exports.retentionContactSchema = zod_1.z.object({
 exports.quoteIdSchema = zod_1.z.object({ id: zod_1.z.string().uuid() });
 exports.quoteListQuerySchema = zod_1.z.object({
     search: zod_1.z.string().trim().max(120).default(''),
-    status: zod_1.z.enum(['todos', 'rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado']).default('todos'),
+    inicio: zod_1.z.string().date().optional(),
+    fim: zod_1.z.string().date().optional(),
+    pagina: zod_1.z.coerce.number().int().min(1).default(1),
+    limite: zod_1.z.coerce.number().int().min(1).max(100).default(25),
+    status: zod_1.z.enum(['todos', 'rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado', 'em_execucao', 'concluido', 'aguardando_aprovacao', 'recusado']).default('todos'),
 });
 const nullableText = (max) => zod_1.z.string().trim().max(max).nullable().optional();
 exports.quotePayloadSchema = zod_1.z.object({
@@ -26,7 +31,7 @@ exports.quotePayloadSchema = zod_1.z.object({
         return length >= 8 && length <= 15;
     }, 'WhatsApp invalido.'),
     origem: zod_1.z.enum(['rapido', 'pasta_vermelha', 'consulta']).default('rapido'),
-    status: zod_1.z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado']).default('rascunho'),
+    status: zod_1.z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado', 'em_execucao', 'concluido', 'aguardando_aprovacao', 'recusado']).default('rascunho'),
     validade: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     descontoValor: zod_1.z.coerce.number().min(0).max(99999999.99).default(0),
     descontoTipo: zod_1.z.enum(['valor', 'percentual']).default('valor'),
@@ -35,6 +40,9 @@ exports.quotePayloadSchema = zod_1.z.object({
     observacoes: nullableText(3000),
     motivoNaoAprovacao: nullableText(1000),
     itens: zod_1.z.array(zod_1.z.object({
+        id: zod_1.z.string().uuid().optional(),
+        dentes: dental_rules_1.teethSchema.default([]),
+        justificativaDentes: nullableText(1000),
         catalogoProcedimentoId: zod_1.z.string().uuid(),
         quantidade: zod_1.z.coerce.number().int().min(1).max(99).default(1),
         valorUnitario: zod_1.z.coerce.number().min(0).max(99999999.99),
@@ -57,7 +65,7 @@ exports.quotePayloadSchema = zod_1.z.object({
     });
 });
 exports.quoteStatusSchema = zod_1.z.object({
-    status: zod_1.z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado']),
+    status: zod_1.z.enum(['rascunho', 'enviado', 'aprovado', 'nao_aprovado', 'expirado', 'cancelado', 'em_execucao', 'concluido', 'aguardando_aprovacao', 'recusado']),
     motivoNaoAprovacao: nullableText(1000),
 });
 exports.quoteSendSchema = zod_1.z.object({
@@ -65,6 +73,7 @@ exports.quoteSendSchema = zod_1.z.object({
     mensagem: zod_1.z.string().trim().min(10).max(1500).optional(),
 });
 exports.quoteScheduleSchema = zod_1.z.object({
+    justificativaDentes: nullableText(1000),
     profissionalId: zod_1.z.string().uuid(),
     inicioEm: zod_1.z.string().datetime({ offset: true }),
     diaInteiro: zod_1.z.boolean().default(false),

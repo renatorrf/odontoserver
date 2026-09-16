@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { teethSchema } from '../dental/dental.rules';
 import { scheduleStatuses } from './schedule-status';
 
 const optionalText = z.preprocess(
@@ -23,9 +24,12 @@ export const scheduleQuerySchema = z
     inicio: dateTime,
     fim: dateTime,
     profissionalIds: optionalText,
+    search: z.string().trim().max(120).default(''),
   })
+  .refine(value=>new Date(value.fim).getTime()>new Date(value.inicio).getTime() && new Date(value.fim).getTime()-new Date(value.inicio).getTime()<=62*86400000, 'Consulte um intervalo de ate 62 dias.')
   .transform((value) => ({
     inicio: value.inicio,
+    search: value.search,
     fim: value.fim,
     profissionalIds: value.profissionalIds
       ? value.profissionalIds.split(',').map((id) => z.string().uuid().parse(id.trim()))
@@ -53,6 +57,9 @@ export const scheduleEventSchema = z
     motivoRemarcacao: optionalText,
     procedimentos: z
       .array(z.object({
+        id: z.string().uuid().optional(),
+        dentes: teethSchema.default([]),
+        justificativaDentes: z.string().trim().max(1000).nullable().optional(),
         catalogoProcedimentoId: z.string().uuid(),
         quantidade: z.coerce.number().int().min(1).max(99).default(1),
       }))
@@ -101,6 +108,8 @@ export const availabilityQuerySchema = z.object({
 
 export const eventStatusSchema = z.object({
   status: z.enum(scheduleStatuses),
+  extracoes: z.array(z.object({ agendaItemId:z.string().uuid(), dentes:teethSchema,
+    confirmado:z.boolean(), justificativa:z.string().trim().max(1000).nullable().optional() })).max(20).default([]),
   justificativa: optionalText,
 }).superRefine((value, context) => {
   if (['cancelado', 'faltou'].includes(value.status) && !value.justificativa) {

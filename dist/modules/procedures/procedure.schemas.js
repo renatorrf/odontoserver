@@ -2,8 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.catalogProcedureStatusSchema = exports.catalogProcedureIdSchema = exports.catalogProcedureListQuerySchema = exports.catalogProcedureSchema = exports.procedureListQuerySchema = exports.createProcedureSchema = void 0;
 const zod_1 = require("zod");
-const optionalText = zod_1.z.preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), zod_1.z.string().trim().optional());
-const optionalDate = zod_1.z.preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional());
+const optionalText = zod_1.z.preprocess((value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value), zod_1.z.string().trim().optional());
+const optionalDate = zod_1.z.preprocess((value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value), zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional());
 exports.createProcedureSchema = zod_1.z.object({
     pacienteId: zod_1.z.string().uuid(),
     profissionalId: zod_1.z.string().uuid().optional(),
@@ -27,6 +27,9 @@ exports.catalogProcedureSchema = zod_1.z.object({
     valor: zod_1.z.coerce.number().finite().nonnegative().max(9999999999.99),
     custoVariavel: zod_1.z.coerce.number().finite().nonnegative().max(9999999999.99).default(0),
     ativo: zod_1.z.boolean().default(true),
+    extracao: zod_1.z.boolean().default(false),
+    formaCobranca: zod_1.z.enum(['POR_DENTE', 'VALOR_UNICO']).default('VALOR_UNICO'),
+    tipoEventoOrtodontico: zod_1.z.enum(['NENHUM', 'INSTALACAO', 'MANUTENCAO', 'OUTRO']).default('NENHUM'),
 });
 exports.catalogProcedureListQuerySchema = zod_1.z.object({
     search: optionalText,

@@ -225,7 +225,7 @@ export async function listProfessionals(auth: AuthContext, input: ProfessionalLi
       where p.empresa_id = $1
         and (
           $2::text is null
-          or p.nome ilike '%' || $2 || '%'
+          or odonto.search_text(p.nome) like '%' || odonto.search_text($2) || '%'
           or p.cpf_normalizado = $3
           or p.conselho_numero ilike '%' || $2 || '%'
         )

@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
 const optionalText = z.preprocess(
-  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  (value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value),
   z.string().trim().optional(),
 );
 
 const optionalDate = z.preprocess(
-  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  (value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value),
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 );
 
@@ -35,6 +35,9 @@ export const catalogProcedureSchema = z.object({
   valor: z.coerce.number().finite().nonnegative().max(9999999999.99),
   custoVariavel: z.coerce.number().finite().nonnegative().max(9999999999.99).default(0),
   ativo: z.boolean().default(true),
+  extracao: z.boolean().default(false),
+  formaCobranca: z.enum(['POR_DENTE', 'VALOR_UNICO']).default('VALOR_UNICO'),
+  tipoEventoOrtodontico: z.enum(['NENHUM', 'INSTALACAO', 'MANUTENCAO', 'OUTRO']).default('NENHUM'),
 });
 
 export const catalogProcedureListQuerySchema = z.object({

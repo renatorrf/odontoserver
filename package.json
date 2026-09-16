@@ -11,7 +11,8 @@
     "start": "node dist/server.js",
     "db:migrate": "ts-node src/database/migrate.ts",
     "db:seed:demo": "ts-node src/database/seed-demo.ts",
-    "test": "npm run build && node --test dist/modules/finance/receivables.calculator.test.js"
+    "test": "npm run build && node --test dist/modules/finance/receivables.calculator.test.js dist/modules/finance/strategic-period.test.js dist/modules/dental/dental.rules.test.js",
+    "test:integration": "npm run build && node --test dist/modules/dental/dental.integration.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

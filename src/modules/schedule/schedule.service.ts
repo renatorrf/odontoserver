@@ -1,4 +1,7 @@
 import { PoolClient } from 'pg';
+import { Tooth } from '../dental/dental.rules';
+import { completeExtractions } from '../dental/dental.service';
+import { syncScheduledItems, syncQuoteFromSchedule } from '../dental/schedule-dental-sync';
 import { query, transaction } from '../../database/pool';
 import { AuthContext } from '../../types/public';
 import { badRequest, conflict, notFound } from '../../utils/http-error';
@@ -55,6 +58,10 @@ interface EventRow {
   confirmacao_envio: string | null;
   lembrete_envio: string | null;
   procedimentos: Array<{
+    id: string;
+    extracao: boolean;
+    formaCobranca: string;
+    dentes: Tooth[];
     catalogoProcedimentoId: string | null;
     descricao: string;
     valor: string | null;
@@ -184,47 +191,7 @@ async function replaceProcedures(
   eventId: string,
   procedures: ScheduleEventInput['procedimentos'],
 ): Promise<void> {
-  await client.query(
-    'delete from odonto.agenda_evento_procedimentos where agenda_evento_id = $1 and empresa_id = $2',
-    [eventId, auth.empresaId],
-  );
-
-  const uniqueIds = [...new Set(procedures.map((item) => item.catalogoProcedimentoId))];
-  if (!uniqueIds.length) {
-    return;
-  }
-
-  const catalog = await client.query<{ id: string; nome: string; valor: string; duracao_minutos: number }>(
-    `
-      select id, nome, valor, duracao_minutos
-        from odonto.catalogo_procedimentos
-       where empresa_id = $1 and id = any($2::uuid[])
-    `,
-    [auth.empresaId, uniqueIds],
-  );
-  if (catalog.rows.length !== uniqueIds.length) {
-    throw notFound('Um dos procedimentos selecionados nao foi encontrado.');
-  }
-
-  const quantities = new Map<string, number>();
-  for (const item of procedures) {
-    quantities.set(item.catalogoProcedimentoId, (quantities.get(item.catalogoProcedimentoId) ?? 0) + item.quantidade);
-  }
-  for (const procedure of catalog.rows) {
-    const quantity = quantities.get(procedure.id) ?? 1;
-    await client.query(
-      `
-        insert into odonto.agenda_evento_procedimentos (
-          empresa_id, agenda_evento_id, catalogo_procedimento_id, descricao, valor,
-          quantidade, duracao_minutos
-        ) values ($1, $2, $3, $4, $5, $6, $7)
-      `,
-      [
-        auth.empresaId, eventId, procedure.id, procedure.nome,
-        Number(procedure.valor) * quantity, quantity, procedure.duracao_minutos * quantity,
-      ],
-    );
-  }
+  await syncScheduledItems(client,auth,eventId,procedures);
 }
 
 async function syncConsultationQuote(
@@ -279,22 +246,7 @@ async function syncConsultationQuote(
     );
   }
 
-  await client.query('delete from odonto.orcamento_itens where orcamento_id = $1', [quoteId]);
-  await client.query(
-    `insert into odonto.orcamento_itens (
-       orcamento_id, catalogo_procedimento_id, descricao, quantidade,
-       valor_unitario, valor_total, ordem, duracao_minutos, status
-     )
-     select $1, aep.catalogo_procedimento_id, aep.descricao, aep.quantidade,
-            round(aep.valor / aep.quantidade, 2), aep.valor,
-            row_number() over (order by aep.created_at, aep.id) - 1,
-            greatest(5, round(aep.duracao_minutos::numeric / aep.quantidade)::integer),
-            aep.status
-       from odonto.agenda_evento_procedimentos aep
-      where aep.agenda_evento_id = $2 and aep.empresa_id = $3
-      order by aep.created_at, aep.id`,
-    [quoteId, eventId, auth.empresaId],
-  );
+  await syncQuoteFromSchedule(client,auth,eventId,quoteId,input.pacienteId ?? null);
 
   const createdFinancialTitle = await client.query<{ id: string }>(
     `insert into odonto.paciente_financeiro_lancamentos (
@@ -360,6 +312,7 @@ function mapEvent(row: EventRow, auth: AuthContext) {
     confirmacaoEnvio: row.confirmacao_envio,
     lembreteEnvio: row.lembrete_envio,
     procedimentos: row.procedimentos.map((procedure) => ({
+      id:procedure.id, extracao:procedure.extracao, formaCobranca:procedure.formaCobranca, dentes:procedure.dentes,
       catalogoProcedimentoId: procedure.catalogoProcedimentoId,
       descricao: procedure.descricao,
       valor: procedure.valor == null ? null : Number(procedure.valor),
@@ -451,6 +404,8 @@ const eventSelect = `
   ) anamnesis on true
   left join lateral (
     select json_agg(json_build_object(
+      'id', aep.id, 'extracao', aep.extracao, 'formaCobranca', aep.forma_cobranca,
+      'dentes', coalesce((select json_agg(json_build_object('numero',d.numero_dente,'denticao',d.tipo_denticao) order by d.numero_dente) from odonto.procedimento_dentes d where d.agenda_item_id=aep.id and d.empresa_id=aep.empresa_id),'[]'::json),
       'catalogoProcedimentoId', aep.catalogo_procedimento_id,
       'descricao', aep.descricao,
       'valor', aep.valor,
@@ -499,6 +454,7 @@ export async function listEvents(auth: AuthContext, input: ScheduleQuery) {
   const result = await query<EventRow>(
     `${eventSelect}
       where ae.empresa_id = $1
+        and ($5::text = '' or odonto.search_text(pac.nome) like '%' || odonto.search_text($5) || '%')
         and ae.inicio_em < $3::timestamptz
         and ae.fim_em > $2::timestamptz
         and (
@@ -506,10 +462,11 @@ export async function listEvents(auth: AuthContext, input: ScheduleQuery) {
           or ae.profissional_id is null
           or ae.profissional_id = any($4::uuid[])
         )
-      order by ae.inicio_em, ae.titulo
+      order by ae.inicio_em, ae.titulo, ae.id limit 5001
     `,
-    [auth.empresaId, input.inicio, input.fim, input.profissionalIds],
+    [auth.empresaId, input.inicio, input.fim, input.profissionalIds, input.search],
   );
+  if(result.rows.length>5000) throw badRequest('Muitos agendamentos. Reduza o periodo ou filtre por paciente/profissional.');
   return result.rows.map((row) => mapEvent(row, auth));
 }
 
@@ -600,8 +557,8 @@ export async function updateEvent(auth: AuthContext, id: string, input: Schedule
   try {
     let rescheduled = false;
     await transaction(async (client) => {
-      const existing = await client.query<{ inicio_em: string; fim_em: string; observacoes_procedimentos: string | null }>(
-        'select inicio_em::text, fim_em::text, observacoes_procedimentos from odonto.agenda_eventos where id = $1 and empresa_id = $2 limit 1 for update',
+      const existing = await client.query<{ inicio_em: string; fim_em: string; paciente_id: string | null; orcamento_id: string | null; observacoes_procedimentos: string | null }>(
+        'select inicio_em::text, fim_em::text, paciente_id, orcamento_id, observacoes_procedimentos from odonto.agenda_eventos where id = $1 and empresa_id = $2 limit 1 for update',
         [id, auth.empresaId],
       );
       if (!existing.rowCount) {
@@ -612,6 +569,7 @@ export async function updateEvent(auth: AuthContext, id: string, input: Schedule
       const period = await resolveEventPeriod(client, auth, input, id);
       const notifications = notificationSettings(input);
       const previous = existing.rows[0];
+      if (previous.orcamento_id && previous.paciente_id !== (input.pacienteId ?? null)) throw badRequest('Nao e permitido trocar o paciente de uma consulta vinculada a orcamento.');
       rescheduled = new Date(previous.inicio_em).getTime() !== period.start.getTime()
         || new Date(previous.fim_em).getTime() !== period.end.getTime();
       const title = input.tipo === 'consulta' ? patientName! : input.titulo!;
@@ -701,6 +659,7 @@ export async function updateEventStatus(
     if (!allowed.includes(input.status)) {
       throw conflict(`Transicao de ${current} para ${input.status} nao permitida.`);
     }
+    if (['atendido','concluido'].includes(input.status)) await completeExtractions(client,auth,id,input.extracoes);
     await client.query(
       `update odonto.agenda_eventos set
          status = $3::odonto.agenda_evento_status,

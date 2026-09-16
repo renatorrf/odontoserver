@@ -1,10 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const zod_1 = require("zod");
+const pool_1 = require("../../database/pool");
+const dental_rules_1 = require("../dental/dental.rules");
+const dental_service_1 = require("../dental/dental.service");
 const async_handler_1 = require("../../utils/async-handler");
 const procedure_schemas_1 = require("./procedure.schemas");
 const procedure_service_1 = require("./procedure.service");
 const router = (0, express_1.Router)();
+router.patch('/realizados/:id/dentes', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    const { id } = procedure_schemas_1.catalogProcedureIdSchema.parse(req.params);
+    const input = zod_1.z.object({ dentes: dental_rules_1.teethSchema, justificativa: zod_1.z.string().trim().min(3).max(1000) }).parse(req.body);
+    await (0, pool_1.transaction)((client) => (0, dental_service_1.correctExtraction)(client, req.auth, id, input.dentes, input.justificativa));
+    res.json({ success: true });
+}));
 router.get('/catalogo', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const input = procedure_schemas_1.catalogProcedureListQuerySchema.parse(req.query);
     res.json({ success: true, procedimentos: await (0, procedure_service_1.listCatalogProcedures)(req.auth, input) });

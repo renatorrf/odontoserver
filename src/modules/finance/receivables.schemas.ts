@@ -3,6 +3,8 @@ import { z } from 'zod';
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const receivablesQuerySchema = z.object({
+  pagina: z.coerce.number().int().min(1).default(1),
+  limite: z.coerce.number().int().min(1).max(100).default(30),
   inicio: date,
   fim: date,
   status: z.enum(['todos', 'pendente', 'parcialmente_pago', 'pago', 'vencido']).default('todos'),

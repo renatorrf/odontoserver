@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { patientDentalContext } from '../dental/dental.service';
 import { Router } from 'express';
 import multer from 'multer';
 import { requirePerfil } from '../../middlewares/auth';
@@ -76,6 +78,12 @@ router.get('/:id/resumo-abas', asyncHandler(async (req, res) => {
   res.json({ success: true, ...(await getPatientTabSummary(req.auth!, id)) });
 }));
 
+router.get('/:id/dentes', asyncHandler(async (req,res) => {
+  const {id}=patientIdParamSchema.parse(req.params);
+  const {orcamentoId}=z.object({orcamentoId:z.string().uuid().optional()}).parse(req.query);
+  res.json({success:true,...await patientDentalContext(req.auth!,id,orcamentoId)});
+}));
+
 router.get('/:id/orcamentos', asyncHandler(async (req, res) => {
   const { id } = patientIdParamSchema.parse(req.params);
   res.json({ success: true, orcamentos: await listPatientQuotes(req.auth!, id) });
@@ -83,7 +91,8 @@ router.get('/:id/orcamentos', asyncHandler(async (req, res) => {
 
 router.post('/:id/orcamentos/:quoteId/duplicar', asyncHandler(async (req, res) => {
   const { id, quoteId } = patientQuoteParamsSchema.parse(req.params);
-  const orcamento = await duplicatePatientQuote(req.auth!, id, quoteId);
+  const { justificativa } = z.object({justificativa:z.string().trim().max(1000).optional()}).parse(req.body);
+  const orcamento = await duplicatePatientQuote(req.auth!, id, quoteId, justificativa);
   res.status(201).json({ success: true, orcamento });
 }));
 

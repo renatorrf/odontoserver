@@ -1,4 +1,8 @@
 import { Router } from 'express';
+import { z } from 'zod';
+import { transaction } from '../../database/pool';
+import { teethSchema } from '../dental/dental.rules';
+import { correctExtraction } from '../dental/dental.service';
 import { asyncHandler } from '../../utils/async-handler';
 import {
   catalogProcedureIdSchema,
@@ -19,6 +23,12 @@ import {
 } from './procedure.service';
 
 const router = Router();
+router.patch('/realizados/:id/dentes', asyncHandler(async (req,res)=>{
+  const {id}=catalogProcedureIdSchema.parse(req.params);
+  const input=z.object({dentes:teethSchema,justificativa:z.string().trim().min(3).max(1000)}).parse(req.body);
+  await transaction((client)=>correctExtraction(client,req.auth!,id,input.dentes,input.justificativa));
+  res.json({success:true});
+}));
 
 router.get('/catalogo', asyncHandler(async (req, res) => {
   const input = catalogProcedureListQuerySchema.parse(req.query);

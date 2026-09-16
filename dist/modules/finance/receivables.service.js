@@ -64,18 +64,25 @@ async function logRejectedFinancialOperation(auth, action, entityId, payload) {
     }
 }
 async function listReceivables(auth, input) {
-    const result = await (0, pool_1.query)(`${baseSql}
+    const result = await (0, pool_1.query)(`with filtered as (
+    ${baseSql}
     where q.created_at::date between $2 and $3
       and ($4 = 'todos' or (case when coalesce(pay.valor_pago, 0) >= q.valor then 'pago'
         when coalesce(pay.valor_pago, 0) > 0 then 'parcialmente_pago'
         when q.vencimento < current_date then 'vencido' else 'pendente' end) = $4)
-      and ($5 = '' or unaccent(p.nome) ilike '%' || unaccent($5) || '%'
-        or regexp_replace(coalesce(pc.celular, q.whatsapp, ''), '\\D', '', 'g') like '%' || regexp_replace($5, '\\D', '', 'g') || '%')
-    order by q.vencimento, p.nome`, [auth.empresaId, input.inicio, input.fim, input.status, input.search]);
-    const items = result.rows.map(map);
-    return { items, resumo: { quantidade: items.length, total: items.reduce((s, i) => s + i.valor, 0),
-            recebido: items.reduce((s, i) => s + i.valorPago, 0), saldo: items.reduce((s, i) => s + i.saldo, 0),
-            vencido: items.filter((i) => i.status === 'vencido').reduce((s, i) => s + i.saldo, 0) } };
+      and ($5 = '' or odonto.search_text(p.nome) like '%' || odonto.search_text($5) || '%'
+        or (regexp_replace($5, '\\D', '', 'g') <> '' and regexp_replace(coalesce(pc.celular, q.whatsapp, ''), '\\D', '', 'g') like '%' || regexp_replace($5, '\\D', '', 'g') || '%'))
+
+  ) select count(*)::text as quantidade,coalesce(sum(valor::numeric),0)::text as total,
+    coalesce(sum(valor_pago::numeric),0)::text as recebido,
+    coalesce(sum(greatest(0,valor::numeric-valor_pago::numeric)),0)::text as saldo,
+    coalesce(sum(greatest(0,valor::numeric-valor_pago::numeric)) filter (where status='vencido'),0)::text as vencido,
+    (select coalesce(json_agg(page),'[]'::json) from
+      (select * from filtered order by vencimento,paciente_nome,orcamento_id limit $6 offset $7) page) as items
+    from filtered`, [auth.empresaId, input.inicio, input.fim, input.status, input.search, input.limite, (input.pagina - 1) * input.limite]);
+    const row = result.rows[0];
+    return { items: row.items.map(map), pagina: input.pagina, temMais: input.pagina * input.limite < Number(row.quantidade),
+        resumo: { quantidade: Number(row.quantidade), total: Number(row.total), recebido: Number(row.recebido), saldo: Number(row.saldo), vencido: Number(row.vencido) } };
 }
 async function receiveQuote(auth, quoteId, input) {
     try {

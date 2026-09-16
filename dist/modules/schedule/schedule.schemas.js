@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.returnAlertStatusSchema = exports.returnAlertQuerySchema = exports.returnAlertSchema = exports.eventStatusSchema = exports.availabilityQuerySchema = exports.eventIdSchema = exports.scheduleEventSchema = exports.scheduleQuerySchema = void 0;
 const zod_1 = require("zod");
+const dental_rules_1 = require("../dental/dental.rules");
 const schedule_status_1 = require("./schedule-status");
 const optionalText = zod_1.z.preprocess((value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value), zod_1.z.string().trim().optional());
 const optionalUuid = zod_1.z.preprocess((value) => (value == null || (typeof value === 'string' && value.trim() === '') ? undefined : value), zod_1.z.string().uuid().optional());
@@ -12,9 +13,12 @@ exports.scheduleQuerySchema = zod_1.z
     inicio: dateTime,
     fim: dateTime,
     profissionalIds: optionalText,
+    search: zod_1.z.string().trim().max(120).default(''),
 })
+    .refine(value => new Date(value.fim).getTime() > new Date(value.inicio).getTime() && new Date(value.fim).getTime() - new Date(value.inicio).getTime() <= 62 * 86400000, 'Consulte um intervalo de ate 62 dias.')
     .transform((value) => ({
     inicio: value.inicio,
+    search: value.search,
     fim: value.fim,
     profissionalIds: value.profissionalIds
         ? value.profissionalIds.split(',').map((id) => zod_1.z.string().uuid().parse(id.trim()))
@@ -38,6 +42,9 @@ exports.scheduleEventSchema = zod_1.z
     motivoRemarcacao: optionalText,
     procedimentos: zod_1.z
         .array(zod_1.z.object({
+        id: zod_1.z.string().uuid().optional(),
+        dentes: dental_rules_1.teethSchema.default([]),
+        justificativaDentes: zod_1.z.string().trim().max(1000).nullable().optional(),
         catalogoProcedimentoId: zod_1.z.string().uuid(),
         quantidade: zod_1.z.coerce.number().int().min(1).max(99).default(1),
     }))
@@ -76,6 +83,8 @@ exports.availabilityQuerySchema = zod_1.z.object({
 });
 exports.eventStatusSchema = zod_1.z.object({
     status: zod_1.z.enum(schedule_status_1.scheduleStatuses),
+    extracoes: zod_1.z.array(zod_1.z.object({ agendaItemId: zod_1.z.string().uuid(), dentes: dental_rules_1.teethSchema,
+        confirmado: zod_1.z.boolean(), justificativa: zod_1.z.string().trim().max(1000).nullable().optional() })).max(20).default([]),
     justificativa: optionalText,
 }).superRefine((value, context) => {
     if (['cancelado', 'faltou'].includes(value.status) && !value.justificativa) {

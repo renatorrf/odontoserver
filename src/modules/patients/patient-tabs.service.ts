@@ -1,10 +1,13 @@
+import { checkPlannedTeeth, readTeeth, writeTeeth } from '../dental/dental.service';
+import { dentalDocumentContent } from '../dental/dental-documents';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../../config/env';
 import { query, transaction } from '../../database/pool';
 import { AuthContext } from '../../types/public';
-import { conflict, notFound } from '../../utils/http-error';
+import { assertClinical } from '../dental/dental.rules';
+import { badRequest, conflict, notFound } from '../../utils/http-error';
 import { optionalText } from '../../utils/normalize';
 import { anamnesisQuestions } from './anamnesis.config';
 import {
@@ -136,7 +139,7 @@ export async function listPatientQuotes(auth: AuthContext, patientId: string) {
                  json_agg(json_build_object(
                    'id', oi.id,
                    'catalogoProcedimentoId', oi.catalogo_procedimento_id,
-                   'descricao', oi.descricao,
+                   'descricao', oi.descricao || coalesce((select ' - dentes ' || string_agg(d.numero_dente::text, ', ' order by d.numero_dente) from odonto.procedimento_dentes d where d.orcamento_item_id=oi.id and d.empresa_id=o.empresa_id),''),
                    'quantidade', oi.quantidade,
                    'valorUnitario', oi.valor_unitario,
                    'valorTotal', oi.valor_total,
@@ -198,6 +201,9 @@ export async function updateQuoteItemStatus(
   itemId: string,
   status: string,
 ) {
+  assertClinical(auth);
+  const extraction = await query(`select 1 from odonto.orcamento_itens i join odonto.orcamentos o on o.id=i.orcamento_id and o.empresa_id=i.empresa_id where i.id=$1 and o.id=$2 and o.empresa_id=$3 and o.paciente_id=$4 and (i.extracao or i.status='concluido')`,[itemId,quoteId,auth.empresaId,patientId]);
+  if (extraction.rowCount) throw badRequest('Extrações devem ser concluidas pelo atendimento com confirmacao dos dentes.');
   const result = await query(
     `update odonto.orcamento_itens oi set status = $5::odonto.procedimento_planejamento_status
       from odonto.orcamentos o
@@ -210,7 +216,7 @@ export async function updateQuoteItemStatus(
   }
 }
 
-export async function duplicatePatientQuote(auth: AuthContext, patientId: string, quoteId: string) {
+export async function duplicatePatientQuote(auth: AuthContext, patientId: string, quoteId: string, reason?: string) {
   return transaction(async (client) => {
     await assertQuote(client, auth, patientId, quoteId);
     const quote = await client.query<{ id: string }>(
@@ -223,15 +229,17 @@ export async function duplicatePatientQuote(auth: AuthContext, patientId: string
       [quoteId, auth.empresaId, auth.usuarioId],
     );
     const newId = quote.rows[0].id;
-    await client.query(
-      `insert into odonto.orcamento_itens (
-        orcamento_id, catalogo_procedimento_id, descricao, quantidade, valor_unitario,
-        valor_total, ordem, duracao_minutos, status
-      ) select $2, catalogo_procedimento_id, descricao, quantidade, valor_unitario,
-               valor_total, ordem, duracao_minutos, 'planejado'
-          from odonto.orcamento_itens where orcamento_id = $1`,
-      [quoteId, newId],
-    );
+    const items = await client.query('select * from odonto.orcamento_itens where orcamento_id=$1 and empresa_id=$2 order by ordem', [quoteId,auth.empresaId]);
+    for (const item of items.rows) {
+      const teeth = await readTeeth(client,auth,'orcamento_item_id',item.id);
+      await checkPlannedTeeth(client,auth,patientId,teeth,newId,reason);
+      const id = randomUUID();
+      await client.query(`insert into odonto.orcamento_itens
+        (id,empresa_id,orcamento_id,catalogo_procedimento_id,descricao,quantidade,valor_unitario,valor_total,ordem,duracao_minutos,status,extracao,forma_cobranca)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'planejado',$11,$12)`,
+        [id,auth.empresaId,newId,item.catalogo_procedimento_id,item.descricao,item.quantidade,item.valor_unitario,item.valor_total,item.ordem,item.duracao_minutos,item.extracao,item.forma_cobranca]);
+      await writeTeeth(client,auth,'orcamento_item_id',id,patientId,teeth,{orcamentoId:newId,orcamentoOrigem:quoteId,procedimentoId:item.catalogo_procedimento_id},reason);
+    }
     return { id: newId };
   });
 }
@@ -633,18 +641,19 @@ export async function listPatientAppointments(
 }
 
 export async function listPatientTimeline(auth: AuthContext, patientId: string) {
+  assertClinical(auth);
   await assertPatient({ query }, auth, patientId);
   const result = await query<any>(
     `with agenda as (
        select ae.id::text as id, ae.inicio_em as data_hora, aep.descricao,
               p.nome as profissional_nome, ae.status::text as status,
-              aep.status::text as procedimento_status, null::text as regiao,
+              aep.status::text as procedimento_status, (select string_agg(d.numero_dente::text, ', ' order by d.numero_dente) from odonto.procedimento_dentes d where d.agenda_item_id=aep.id and d.empresa_id=aep.empresa_id) as regiao,
               ae.observacoes_procedimentos as observacoes, ae.orcamento_id,
               upper(substr(ae.orcamento_id::text,1,8)) as orcamento_numero,
               ae.id as agendamento_id, aep.valor::numeric as valor,
               coalesce(finance.recebido,0)::numeric as recebido,
               greatest(coalesce(finance.faturado,aep.valor,0)-coalesce(finance.recebido,0),0)::numeric as saldo,
-              coalesce(docs.documentos,'[]'::json) as documentos
+              coalesce(docs.documentos,'[]'::json) as documentos, false as extracao_realizada
          from odonto.agenda_eventos ae
          join odonto.agenda_evento_procedimentos aep
            on aep.agenda_evento_id=ae.id and aep.empresa_id=ae.empresa_id
@@ -675,13 +684,13 @@ export async function listPatientTimeline(auth: AuthContext, patientId: string) 
          ) docs on true
         where ae.empresa_id=$1 and ae.paciente_id=$2 and ae.tipo='consulta'
      ), realizados as (
-       select pr.id::text as id, pr.data_procedimento::timestamptz as data_hora, pr.descricao,
+       select pr.id::text as id, coalesce(pr.realizado_em,pr.data_procedimento::timestamptz) as data_hora, pr.descricao,
               coalesce(p.nome,pr.profissional_nome) as profissional_nome, 'atendido'::text as status,
-              'concluido'::text as procedimento_status, null::text as regiao,
-              pr.observacoes, null::uuid as orcamento_id, null::text as orcamento_numero,
-              null::uuid as agendamento_id, pr.valor::numeric as valor,
+              'concluido'::text as procedimento_status, pr.dente as regiao,
+              pr.observacoes, (select i.orcamento_id from odonto.orcamento_itens i where i.id=pr.orcamento_item_id and i.empresa_id=pr.empresa_id) as orcamento_id, null::text as orcamento_numero,
+              (select i.agenda_evento_id from odonto.agenda_evento_procedimentos i where i.id=pr.agenda_item_id and i.empresa_id=pr.empresa_id) as agendamento_id, pr.valor::numeric as valor,
               0::numeric as recebido, pr.valor::numeric as saldo,
-              coalesce(docs.documentos,'[]'::json) as documentos
+              coalesce(docs.documentos,'[]'::json) as documentos, exists(select 1 from odonto.procedimento_dentes d where d.realizado_id=pr.id and d.empresa_id=pr.empresa_id) as extracao_realizada
          from odonto.procedimentos_realizados pr
          left join odonto.profissionais p on p.id=pr.profissional_id and p.empresa_id=pr.empresa_id
          left join lateral (
@@ -710,6 +719,7 @@ export async function listPatientTimeline(auth: AuthContext, patientId: string) 
     profissionalNome: row.profissional_nome,
     status: row.status,
     procedimentoStatus: row.procedimento_status,
+    extracaoRealizada: row.extracao_realizada,
     regiao: row.regiao,
     observacoes: row.observacoes,
     orcamentoId: row.orcamento_id,
@@ -723,6 +733,7 @@ export async function listPatientTimeline(auth: AuthContext, patientId: string) 
 }
 
 export async function listClinicalDocuments(auth: AuthContext, patientId: string) {
+  assertClinical(auth);
   await assertPatient({ query }, auth, patientId);
   const result = await query<any>(
     `select d.id,d.tipo,d.status,d.conteudo,d.versao,d.emitido_em,d.agendamento_id,
@@ -757,7 +768,7 @@ export async function createClinicalDocument(auth: AuthContext, patientId: strin
        select $1,$2,$3,$4,p.id,$6,$7,$8::jsonb,$9,$9
          from odonto.profissionais p where p.id=$5 and p.empresa_id=$1 returning id`,
       [auth.empresaId, patientId, input.agendamentoId ?? null, input.procedimentoRealizadoId ?? null,
-        input.profissionalId, input.tipo, input.status, JSON.stringify(input.conteudo), auth.usuarioId]);
+        input.profissionalId, input.tipo, input.status, JSON.stringify(await dentalDocumentContent(client,auth,patientId,input)), auth.usuarioId]);
     if (!result.rowCount) throw notFound('Profissional nao encontrado.');
     await client.query(`insert into odonto.audit_logs (empresa_id,usuario_id,entidade,entidade_id,acao,payload)
       values ($1,$2,'documento_clinico',$3,$4,$5::jsonb)`, [auth.empresaId, auth.usuarioId,
@@ -774,7 +785,7 @@ export async function updateClinicalDocument(auth: AuthContext, patientId: strin
         conteudo=$8::jsonb,agendamento_id=$3,procedimento_realizado_id=$4,
         versao=versao+1,updated_by=$9 where id=$1 and paciente_id=$2 and empresa_id=$10`,
       [documentId, patientId, input.agendamentoId ?? null, input.procedimentoRealizadoId ?? null,
-        input.profissionalId, input.tipo, input.status, JSON.stringify(input.conteudo), auth.usuarioId, auth.empresaId]);
+        input.profissionalId, input.tipo, input.status, JSON.stringify(await dentalDocumentContent(client,auth,patientId,input)), auth.usuarioId, auth.empresaId]);
     if (!result.rowCount) throw notFound('Documento clinico nao encontrado.');
     await client.query(`insert into odonto.audit_logs (empresa_id,usuario_id,entidade,entidade_id,acao,payload)
       values ($1,$2,'documento_clinico',$3,'edicao',$4::jsonb)`, [auth.empresaId, auth.usuarioId,

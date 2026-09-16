@@ -1,3 +1,5 @@
+import { assertClinical } from '../dental/dental.rules';
+import { badRequest } from '../../utils/http-error';
 import { query, transaction } from '../../database/pool';
 import { AuthContext } from '../../types/public';
 import { conflict, notFound } from '../../utils/http-error';
@@ -20,6 +22,9 @@ interface CatalogProcedureRow {
   valor: string;
   custo_variavel: string;
   ativo: boolean;
+  extracao: boolean;
+  forma_cobranca: string;
+  tipo_evento_ortodontico: string;
   created_at: string;
   updated_at: string;
 }
@@ -35,6 +40,9 @@ function mapCatalogProcedure(row: CatalogProcedureRow) {
     valor: Number(row.valor),
     custoVariavel: Number(row.custo_variavel),
     ativo: row.ativo,
+    extracao: row.extracao,
+    formaCobranca: row.forma_cobranca,
+    tipoEventoOrtodontico: row.tipo_evento_ortodontico,
     criadoEm: row.created_at,
     atualizadoEm: row.updated_at,
   };
@@ -48,12 +56,13 @@ export async function listCatalogProcedures(auth: AuthContext, input: CatalogPro
   const search = optionalText(input.search);
   const result = await query<CatalogProcedureRow>(
     `
-      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at
+      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at, extracao, forma_cobranca, tipo_evento_ortodontico
         from odonto.catalogo_procedimentos
        where empresa_id = $1
-         and ($2::text is null or nome ilike '%' || $2 || '%' or codigo ilike '%' || $2 || '%' or categoria ilike '%' || $2 || '%')
+         and ($2::text is null or odonto.search_text(nome) like '%' || odonto.search_text($2) || '%' or codigo ilike '%' || $2 || '%' or odonto.search_text(categoria) like '%' || odonto.search_text($2) || '%')
          and ($3 = 'todos' or ($3 = 'ativos' and ativo = true) or ($3 = 'inativos' and ativo = false))
        order by ativo desc, nome
+       limit 200
     `,
     [auth.empresaId, search, input.status],
   );
@@ -63,7 +72,7 @@ export async function listCatalogProcedures(auth: AuthContext, input: CatalogPro
 export async function getCatalogProcedure(auth: AuthContext, id: string) {
   const result = await query<CatalogProcedureRow>(
     `
-      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at
+      select id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_at, updated_at, extracao, forma_cobranca, tipo_evento_ortodontico
         from odonto.catalogo_procedimentos
        where id = $1 and empresa_id = $2
        limit 1
@@ -77,12 +86,13 @@ export async function getCatalogProcedure(auth: AuthContext, id: string) {
 }
 
 export async function createCatalogProcedure(auth: AuthContext, input: CatalogProcedureInput) {
+  assertClinical(auth);
   try {
     const result = await query<{ id: string }>(
       `
         insert into odonto.catalogo_procedimentos (
-          empresa_id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_by, updated_by
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+          empresa_id, codigo, nome, descricao, categoria, duracao_minutos, valor, custo_variavel, ativo, created_by, updated_by, extracao, forma_cobranca, tipo_evento_ortodontico
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13)
         returning id
       `,
       [
@@ -95,7 +105,7 @@ export async function createCatalogProcedure(auth: AuthContext, input: CatalogPr
         input.valor,
         input.custoVariavel,
         input.ativo,
-        auth.usuarioId,
+        auth.usuarioId, input.extracao, input.formaCobranca, input.tipoEventoOrtodontico,
       ],
     );
     return getCatalogProcedure(auth, result.rows[0].id);
@@ -108,6 +118,7 @@ export async function createCatalogProcedure(auth: AuthContext, input: CatalogPr
 }
 
 export async function updateCatalogProcedure(auth: AuthContext, id: string, input: CatalogProcedureInput) {
+  assertClinical(auth);
   try {
     const result = await query(
       `
@@ -120,7 +131,7 @@ export async function updateCatalogProcedure(auth: AuthContext, id: string, inpu
           valor = $8,
           custo_variavel = $9,
           ativo = $10,
-          updated_by = $11
+          updated_by = $11, extracao=$12, forma_cobranca=$13, tipo_evento_ortodontico=$14
         where id = $1 and empresa_id = $2
       `,
       [
@@ -134,7 +145,7 @@ export async function updateCatalogProcedure(auth: AuthContext, id: string, inpu
         input.valor,
         input.custoVariavel,
         input.ativo,
-        auth.usuarioId,
+        auth.usuarioId, input.extracao, input.formaCobranca, input.tipoEventoOrtodontico,
       ],
     );
     if (!result.rowCount) {
@@ -203,6 +214,7 @@ export async function listProcedures(auth: AuthContext, params: ProcedureListQue
 }
 
 export async function createProcedure(auth: AuthContext, input: CreateProcedureInput) {
+  assertClinical(auth);
   return transaction(async (client) => {
     const patientResult = await client.query(
       'select id from odonto.pacientes where id = $1 and empresa_id = $2 limit 1',
@@ -227,12 +239,13 @@ export async function createProcedure(auth: AuthContext, input: CreateProcedureI
 
     if (input.catalogoProcedimentoId) {
       const catalogResult = await client.query(
-        'select 1 from odonto.catalogo_procedimentos where id = $1 and empresa_id = $2 limit 1',
+        'select extracao from odonto.catalogo_procedimentos where id = $1 and empresa_id = $2 limit 1',
         [input.catalogoProcedimentoId, auth.empresaId],
       );
       if (!catalogResult.rowCount) {
         throw notFound('Procedimento do catalogo nao encontrado.');
       }
+      if (catalogResult.rows[0].extracao) throw badRequest('Registre a extracao pelo atendimento, confirmando os dentes executados.');
     }
 
     const result = await client.query(

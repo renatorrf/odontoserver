@@ -369,8 +369,8 @@ async function listPatients(auth, params) {
       where p.empresa_id = $1
         and (
           $2::text is null
-          or lower(p.nome) like lower('%' || $2 || '%')
-          or p.cpf_normalizado like regexp_replace($2, '\\D', '', 'g') || '%'
+          or odonto.search_text(p.nome) like '%' || odonto.search_text($2) || '%'
+          or (regexp_replace($2, '\\D', '', 'g') <> '' and p.cpf_normalizado like regexp_replace($2, '\\D', '', 'g') || '%')
           or p.numero_prontuario = $2
         )
       order by p.cadastrado_em desc

@@ -8,6 +8,7 @@ const finance_service_1 = require("./finance.service");
 const management_schemas_1 = require("./management.schemas");
 const management_service_1 = require("./management.service");
 const strategic_dashboard_service_1 = require("./strategic-dashboard.service");
+const orthodontics_service_1 = require("./orthodontics.service");
 const receivables_schemas_1 = require("./receivables.schemas");
 const receivables_service_1 = require("./receivables.service");
 const router = (0, express_1.Router)();
@@ -73,10 +74,13 @@ router.get('/resultados', (0, async_handler_1.asyncHandler)(async (req, res) => 
     res.json({ success: true, ...(await (0, management_service_1.getOperationalResults)(req.auth, management_schemas_1.reportQuerySchema.parse(req.query))) });
 }));
 router.get('/painel-estrategico', (0, async_handler_1.asyncHandler)(async (req, res) => {
-    res.json({ success: true, ...(await (0, strategic_dashboard_service_1.getStrategicDashboard)(req.auth, management_schemas_1.reportQuerySchema.parse(req.query))) });
+    res.json({ success: true, ...(await (0, strategic_dashboard_service_1.getStrategicDashboard)(req.auth, management_schemas_1.strategicDashboardQuerySchema.parse(req.query))) });
 }));
 router.get('/painel-estrategico/categorias/detalhes', (0, async_handler_1.asyncHandler)(async (req, res) => {
     res.json({ success: true, ...(await (0, strategic_dashboard_service_1.listStrategicCategoryProcedures)(req.auth, management_schemas_1.strategicCategoryDetailQuerySchema.parse(req.query))) });
+}));
+router.get('/ortodontia/retornos', (0, async_handler_1.asyncHandler)(async (req, res) => {
+    res.json({ success: true, ...(await (0, orthodontics_service_1.listOrthodonticFollowUps)(req.auth)) });
 }));
 router.get('/apuracao', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const input = finance_schemas_1.financeStatementQuerySchema.parse(req.query);

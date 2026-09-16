@@ -2,7 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listStrategicCategoryProcedures = listStrategicCategoryProcedures;
 exports.getStrategicDashboard = getStrategicDashboard;
+const installation_count_1 = require("./installation-count");
 const pool_1 = require("../../database/pool");
+const strategic_period_1 = require("./strategic-period");
 function money(value) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -48,8 +50,8 @@ async function listStrategicCategoryProcedures(auth, input) {
             to_char(ae.inicio_em at time zone 'America/Sao_Paulo', 'YYYY-MM-DD') as data,
             case when ae.dia_inteiro then null else to_char(ae.inicio_em at time zone 'America/Sao_Paulo', 'HH24:MI') end as horario,
             coalesce(aep.quantidade, 1)::text as quantidade,
-            coalesce(aep.valor, cp.valor, 0)::text as valor_unitario,
-            (coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1))::text as valor_total,
+            (coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0) / greatest(coalesce(aep.quantidade, 1),1))::text as valor_unitario,
+            (coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0))::text as valor_total,
             ae.status::text as status
        from odonto.agenda_eventos ae
        inner join odonto.agenda_evento_procedimentos aep
@@ -87,7 +89,7 @@ async function listStrategicCategoryProcedures(auth, input) {
     };
 }
 async function loadBillingBreakdown(auth, input) {
-    const [totals, receivedMethods, pendingMethods, orthodontics] = await Promise.all([
+    const [totals, receivedMethods, pendingMethods, orthodontics, installations, installationSales] = await Promise.all([
         (0, pool_1.query)(`select coalesce(sum(fl.valor),0)::text as faturado,
               coalesce(sum(coalesce(pay.recebido,0)),0)::text as recebido,
               count(distinct fl.orcamento_id)::text as atendimentos
@@ -138,12 +140,14 @@ async function loadBillingBreakdown(auth, input) {
             where oi.orcamento_id=fl.orcamento_id
               and (coalesce(cp.categoria,'') ilike '%ortod%' or oi.descricao ilike '%ortod%')
           )`, [auth.empresaId, input.inicio, input.fim]),
+        (0, pool_1.query)(installation_count_1.installationCountSql, [auth.empresaId, input.inicio, input.fim]),
+        (0, pool_1.query)(installation_count_1.installationSalesSql, [auth.empresaId, input.inicio, input.fim]),
     ]);
     const total = totals.rows[0];
     const ortho = orthodontics.rows[0];
     const faturado = Number(total.faturado);
     const recebido = Number(total.recebido);
-    const orthoFaturado = Number(ortho.faturado);
+    const orthoFaturado = Number(installationSales.rows[0].valor);
     const orthoRecebido = Number(ortho.recebido);
     return {
         faturado,
@@ -153,6 +157,7 @@ async function loadBillingBreakdown(auth, input) {
         recebidoPorForma: receivedMethods.rows.map((row) => ({ forma: row.forma, valor: Number(row.valor) })),
         pendentePorForma: pendingMethods.rows.map((row) => ({ forma: row.forma, valor: Number(row.valor) })),
         ortodontia: {
+            quantidadeInstalacoes: Number(installations.rows[0].quantidade),
             faturado: orthoFaturado,
             recebido: orthoRecebido,
             naoRecebido: money(Math.max(orthoFaturado - orthoRecebido, 0)),
@@ -194,11 +199,11 @@ async function loadSummary(auth, input) {
       `, [auth.empresaId, input.inicio, input.fim]),
         (0, pool_1.query)(`
         select
-          coalesce(sum(coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1)), 0)::text as receita,
+          coalesce(sum(coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0)), 0)::text as receita,
           coalesce(sum(
             case
               when pc.tipo = 'porcentagem' then round(
-                coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1) * coalesce(pc.percentual_geral, 0) / 100,
+                coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0) * coalesce(pc.percentual_geral, 0) / 100,
                 2
               )
               when pc.tipo = 'valor_fixo' then coalesce(pc.valor_fixo, 0) * coalesce(aep.quantidade, 1)
@@ -266,10 +271,7 @@ async function loadSummary(auth, input) {
     };
 }
 async function getStrategicDashboard(auth, input) {
-    const start = new Date(`${input.inicio}T00:00:00.000Z`);
-    const end = new Date(`${input.fim}T00:00:00.000Z`);
-    const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
-    const unit = days <= 45 ? 'day' : 'month';
+    const unit = (0, strategic_period_1.resolveStrategicGranularity)(input) === 'dia' ? 'day' : 'month';
     const interval = unit === 'day' ? '1 day' : '1 month';
     const trunc = unit === 'day' ? 'day' : 'month';
     const previous = previousPeriod(input);
@@ -306,7 +308,7 @@ async function getStrategicDashboard(auth, input) {
            group by 1
         ), projected as (
           select date_trunc('${trunc}', ae.inicio_em)::date as periodo,
-                 sum(coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1)) as receita
+                 sum(coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0)) as receita
             from odonto.agenda_eventos ae
             inner join odonto.agenda_evento_procedimentos aep
               on aep.agenda_evento_id = ae.id and aep.empresa_id = ae.empresa_id
@@ -345,7 +347,7 @@ async function getStrategicDashboard(auth, input) {
            group by 1
         ), projected as (
           select coalesce(cp.categoria, 'Sem categoria') as categoria,
-                 sum(coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1)) as valor,
+                 sum(coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0)) as valor,
                  sum(coalesce(aep.quantidade, 1)) as procedimentos
             from odonto.agenda_eventos ae
             inner join odonto.agenda_evento_procedimentos aep
@@ -396,7 +398,7 @@ async function getStrategicDashboard(auth, input) {
                and pr.data_procedimento between $2::date and $3::date
           ) realized on true
           left join lateral (
-            select sum(coalesce(aep.valor, cp.valor, 0) * coalesce(aep.quantidade, 1)) as receita,
+            select sum(coalesce(aep.valor, cp.valor * coalesce(aep.quantidade, 1), 0)) as receita,
                    sum(coalesce(aep.quantidade, 1)) as procedimentos
               from odonto.agenda_eventos ae
               inner join odonto.agenda_evento_procedimentos aep

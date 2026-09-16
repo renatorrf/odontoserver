@@ -17,6 +17,7 @@ import {
   expenseSchema,
   operationalCostConfigSchema,
   reportQuerySchema,
+  strategicDashboardQuerySchema,
   strategicCategoryDetailQuerySchema,
   updateExpenseSchema,
 } from './management.schemas';
@@ -35,6 +36,7 @@ import {
   updateExpensePayment,
 } from './management.service';
 import { getStrategicDashboard, listStrategicCategoryProcedures } from './strategic-dashboard.service';
+import { listOrthodonticFollowUps } from './orthodontics.service';
 import { paymentReversalParamsSchema, paymentReversalSchema, quoteReceiptParamsSchema, quoteReceiptSchema, receivablesQuerySchema } from './receivables.schemas';
 import { listReceivables, receiveQuote, reversePayment } from './receivables.service';
 
@@ -117,11 +119,15 @@ router.get('/resultados', asyncHandler(async (req, res) => {
 }));
 
 router.get('/painel-estrategico', asyncHandler(async (req, res) => {
-  res.json({ success: true, ...(await getStrategicDashboard(req.auth!, reportQuerySchema.parse(req.query))) });
+  res.json({ success: true, ...(await getStrategicDashboard(req.auth!, strategicDashboardQuerySchema.parse(req.query))) });
 }));
 
 router.get('/painel-estrategico/categorias/detalhes', asyncHandler(async (req, res) => {
   res.json({ success: true, ...(await listStrategicCategoryProcedures(req.auth!, strategicCategoryDetailQuerySchema.parse(req.query))) });
+}));
+
+router.get('/ortodontia/retornos', asyncHandler(async (req, res) => {
+  res.json({ success: true, ...(await listOrthodonticFollowUps(req.auth!)) });
 }));
 
 router.get(
