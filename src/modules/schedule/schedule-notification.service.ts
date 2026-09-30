@@ -1,7 +1,11 @@
 import { query, transaction } from '../../database/pool';
 import { sendAppointmentWhatsApp } from '../../services/whatsapp.service';
 
-type NotificationKind = 'confirmacao_agendamento' | 'remarcacao_agendamento' | 'lembrete_duas_horas';
+type NotificationKind =
+  | 'confirmacao_agendamento'
+  | 'remarcacao_agendamento'
+  | 'lembrete_duas_horas'
+  | 'lembrete_retorno_tres_dias';
 type NotificationStatus = 'pendente' | 'enviada' | 'falhou';
 
 interface NotificationEventRow {
@@ -13,6 +17,7 @@ interface NotificationEventRow {
   celular_pais: string | null;
   profissional_nome: string;
   inicio_em: string;
+  status: 'agendado' | 'confirmado';
   notificar_aplicativo: boolean;
   notificar_whatsapp: boolean;
   procedimentos: string[];
@@ -34,16 +39,23 @@ function contentFor(event: NotificationEventRow, kind: NotificationKind) {
     timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date);
   const procedures = event.procedimentos.join(', ');
+  const isOrthodonticReminder = kind === 'lembrete_retorno_tres_dias';
   const title = kind === 'lembrete_duas_horas'
-    ? 'Seu atendimento começa em 2 horas'
+    ? 'Seu atendimento comeca em 2 horas'
     : kind === 'remarcacao_agendamento'
       ? 'Consulta remarcada'
-      : 'Consulta agendada';
+      : isOrthodonticReminder
+        ? 'Retorno ortodontico em 3 dias'
+        : 'Consulta agendada';
   const action = kind === 'lembrete_duas_horas'
     ? 'Lembramos que seu atendimento acontece hoje'
     : kind === 'remarcacao_agendamento'
       ? 'Seu atendimento foi remarcado'
-      : 'Seu atendimento foi agendado';
+      : isOrthodonticReminder
+        ? event.status === 'confirmado'
+          ? 'Seu retorno ortodontico esta confirmado'
+          : 'Seu retorno ortodontico esta reservado; confirme ou altere o horario no portal'
+        : 'Seu atendimento foi agendado';
   return {
     title,
     date: dateText,
@@ -61,6 +73,7 @@ export async function sendScheduleNotification(
   const result = await query<NotificationEventRow>(
     `select ae.id, ae.empresa_id, ae.paciente_id, pac.nome as paciente_nome,
             pct.celular, pct.celular_pais, p.nome as profissional_nome, ae.inicio_em::text,
+            ae.status::text,
             ae.notificar_aplicativo, ae.notificar_whatsapp,
             array_agg(aep.descricao order by aep.descricao) as procedimentos
        from odonto.agenda_eventos ae

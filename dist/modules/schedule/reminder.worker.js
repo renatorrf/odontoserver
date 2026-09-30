@@ -10,7 +10,7 @@ async function processUpcomingAppointmentReminders() {
         return 0;
     running = true;
     try {
-        const eventIds = await (0, pool_1.transaction)(async (client) => {
+        const twoHourEventIds = await (0, pool_1.transaction)(async (client) => {
             const result = await client.query(`select id from odonto.agenda_eventos
           where tipo = 'consulta'
             and status in ('agendado', 'confirmado')
@@ -28,10 +28,31 @@ async function processUpcomingAppointmentReminders() {
             }
             return result.rows.map((row) => row.id);
         });
-        for (const eventId of eventIds) {
+        for (const eventId of twoHourEventIds) {
             await (0, schedule_notification_service_1.sendScheduleNotification)(eventId, 'lembrete_duas_horas');
         }
-        return eventIds.length;
+        const threeDayEventIds = await (0, pool_1.transaction)(async (client) => {
+            const result = await client.query(`select id from odonto.agenda_eventos
+          where tipo = 'consulta'
+            and retorno_ortodontico = true
+            and status in ('agendado', 'confirmado')
+            and lembrete_tres_dias_enviado_em is null
+            and inicio_em > now()
+            and inicio_em <= now() + interval '3 days'
+          order by inicio_em
+          for update skip locked
+          limit 50`);
+            if (result.rows.length) {
+                await client.query(`update odonto.agenda_eventos
+              set lembrete_tres_dias_enviado_em = now()
+            where id = any($1::uuid[])`, [result.rows.map((row) => row.id)]);
+            }
+            return result.rows.map((row) => row.id);
+        });
+        for (const eventId of threeDayEventIds) {
+            await (0, schedule_notification_service_1.sendScheduleNotification)(eventId, 'lembrete_retorno_tres_dias');
+        }
+        return twoHourEventIds.length + threeDayEventIds.length;
     }
     finally {
         running = false;

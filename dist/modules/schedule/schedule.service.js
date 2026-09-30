@@ -17,6 +17,7 @@ const availability_service_1 = require("./availability.service");
 const schedule_notification_service_1 = require("./schedule-notification.service");
 const schedule_status_1 = require("./schedule-status");
 const anamnesis_config_1 = require("../patients/anamnesis.config");
+const orthodontic_return_service_1 = require("./orthodontic-return.service");
 async function validateReferences(client, auth, input) {
     let patientName = null;
     let patientWhatsapp = null;
@@ -137,6 +138,111 @@ async function syncConsultationQuote(client, auth, eventId, input, patientName, 
                 orcamentoId: quoteId, agendamentoId: eventId, origem: 'agenda' })]);
     }
     return quoteId;
+}
+async function createPendingOrthodonticReturnAlert(client, auth, sourceEventId) {
+    await client.query(`insert into odonto.alertas_retorno (
+       empresa_id, paciente_id, profissional_id, motivo, retornar_em, observacoes, created_by, updated_by
+     )
+     select ae.empresa_id, ae.paciente_id, ae.profissional_id,
+            'Retorno ortodontico automatico',
+            ((ae.inicio_em at time zone 'America/Sao_Paulo')::date + 30),
+            'Nao foi possivel reservar automaticamente. Verifique o procedimento de manutencao e a disponibilidade do profissional.',
+            $3, $3
+       from odonto.agenda_eventos ae
+      where ae.id = $1 and ae.empresa_id = $2 and ae.paciente_id is not null
+        and exists (
+          select 1 from odonto.agenda_evento_procedimentos aep
+          join odonto.catalogo_procedimentos cp
+            on cp.id = aep.catalogo_procedimento_id and cp.empresa_id = aep.empresa_id
+          where aep.empresa_id = ae.empresa_id and aep.agenda_evento_id = ae.id
+            and aep.status::text not in ('cancelado', 'suspenso')
+            and cp.tipo_evento_ortodontico in ('INSTALACAO', 'MANUTENCAO')
+        )
+        and not exists (
+          select 1 from odonto.agenda_eventos next_event
+           where next_event.empresa_id = ae.empresa_id
+             and next_event.origem_evento_id = ae.id
+             and next_event.retorno_ortodontico = true
+        )
+        and not exists (
+          select 1 from odonto.alertas_retorno alert
+           where alert.empresa_id = ae.empresa_id and alert.paciente_id = ae.paciente_id
+             and alert.motivo = 'Retorno ortodontico automatico'
+             and alert.retornar_em = ((ae.inicio_em at time zone 'America/Sao_Paulo')::date + 30)
+             and alert.status in ('pendente', 'agendado')
+        )`, [sourceEventId, auth.empresaId, auth.usuarioId]);
+}
+async function scheduleAutomaticOrthodonticReturn(client, auth, sourceEventId) {
+    const plan = await (0, orthodontic_return_service_1.resolveAutomaticOrthodonticReturn)(client, auth, sourceEventId);
+    if (!plan) {
+        await createPendingOrthodonticReturnAlert(client, auth, sourceEventId);
+        return;
+    }
+    await client.query('savepoint automatic_orthodontic_return');
+    try {
+        const result = await client.query(`insert into odonto.agenda_eventos (
+         empresa_id, profissional_id, paciente_id, tipo, titulo, categoria, observacoes,
+         inicio_em, fim_em, dia_inteiro, primeira_consulta, confirmacao_envio, lembrete_envio,
+         lembrete_duas_horas_habilitado, notificar_aplicativo, notificar_whatsapp,
+         retorno_ortodontico, origem_evento_id, created_by, updated_by
+       ) values (
+         $1, $2, $3, 'consulta', $4, 'Ortodontia', $5,
+         $6, $7, false, false, 'portal_paciente', 'aplicativo_whatsapp',
+         true, true, true, true, $8, $9, $9
+       ) returning id`, [
+            auth.empresaId,
+            plan.professionalId,
+            plan.patientId,
+            plan.patientName,
+            'Retorno ortodontico gerado automaticamente para 30 dias apos a ultima visita.',
+            plan.start.toISOString(),
+            plan.end.toISOString(),
+            sourceEventId,
+            auth.usuarioId,
+        ]);
+        const eventId = result.rows[0].id;
+        const input = {
+            tipo: 'consulta',
+            profissionalId: plan.professionalId,
+            pacienteId: plan.patientId,
+            categoria: 'Ortodontia',
+            observacoes: 'Retorno ortodontico automatico.',
+            observacoesProcedimentos: undefined,
+            inicioEm: plan.start.toISOString(),
+            fimEm: plan.end.toISOString(),
+            diaInteiro: false,
+            primeiraConsulta: false,
+            confirmacaoEnvio: 'portal_paciente',
+            lembreteEnvio: 'aplicativo_whatsapp',
+            motivoRemarcacao: undefined,
+            procedimentos: [{ catalogoProcedimentoId: plan.procedureId, quantidade: 1, dentes: [] }],
+        };
+        await replaceProcedures(client, auth, eventId, input.procedimentos);
+        const whatsappDigits = plan.patientWhatsapp?.replace(/\D/g, '') ?? '';
+        if (whatsappDigits.length >= 8 && whatsappDigits.length <= 15) {
+            await syncConsultationQuote(client, auth, eventId, input, plan.patientName, plan.patientWhatsapp);
+        }
+        await client.query(`insert into odonto.agenda_evento_status_historico (
+         empresa_id, agenda_evento_id, status_anterior, status_novo, justificativa, created_by
+       ) values ($1, $2, null, 'agendado', 'Retorno ortodontico automatico', $3)`, [auth.empresaId, eventId, auth.usuarioId]);
+        await client.query(`insert into odonto.alertas_retorno (
+         empresa_id, paciente_id, profissional_id, agenda_evento_id, motivo, retornar_em,
+         observacoes, status, created_by, updated_by
+       ) values (
+         $1, $2, $3, $4, 'Retorno ortodontico automatico',
+         ($5::timestamptz at time zone 'America/Sao_Paulo')::date,
+         'Horario reservado automaticamente; aguarda confirmacao do paciente.',
+         'agendado', $6, $6
+       )`, [auth.empresaId, plan.patientId, plan.professionalId, eventId, plan.start.toISOString(), auth.usuarioId]);
+        await client.query('release savepoint automatic_orthodontic_return');
+    }
+    catch (error) {
+        await client.query('rollback to savepoint automatic_orthodontic_return');
+        await createPendingOrthodonticReturnAlert(client, auth, sourceEventId);
+        if (!['23P01', '23505'].includes(error.code ?? '')) {
+            console.error('automatic orthodontic return failed', error);
+        }
+    }
 }
 function mapEvent(row, auth) {
     const canViewClinical = ['portal_admin', 'gestor', 'dentista'].includes(auth.perfil);
@@ -421,6 +527,7 @@ async function updateEvent(auth, id, input) {
             lembrete_duas_horas_habilitado = $16, notificar_aplicativo = $17,
             notificar_whatsapp = $18,
             lembrete_duas_horas_enviado_em = case when $19 then null else lembrete_duas_horas_enviado_em end,
+            lembrete_tres_dias_enviado_em = case when $19 then null else lembrete_tres_dias_enviado_em end,
             updated_by = $20
           where id = $1 and empresa_id = $2
         `, [
@@ -492,6 +599,7 @@ async function updateEventStatus(auth, id, input) {
         if (['atendido', 'concluido'].includes(input.status)) {
             await client.query(`insert into odonto.audit_logs (empresa_id,usuario_id,entidade,entidade_id,acao,payload)
          values ($1,$2,'agenda_eventos',$3,'conclusao_procedimento',$4::jsonb)`, [auth.empresaId, auth.usuarioId, id, JSON.stringify({ statusAnterior: current, statusNovo: input.status })]);
+            await scheduleAutomaticOrthodonticReturn(client, auth, id);
         }
     });
 }
