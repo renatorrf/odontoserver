@@ -95,6 +95,7 @@ export const expensePaymentSchema = z.object({
   referenciaPagamento: optionalText,
   observacoes: optionalText,
   pagaEm: optionalDate,
+  justificativaRetroativa: z.string().trim().min(5).max(1000).optional(),
 });
 
 export const reportQuerySchema = z.object({

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.env = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
+const jwtSecret = required('JWT_SECRET');
 function required(name) {
     const value = process.env[name]?.trim();
     if (!value) {
@@ -33,7 +34,8 @@ exports.env = {
     databaseUrl: required('DATABASE_URL'),
     dbSsl: process.env.DB_SSL?.trim().toLowerCase() ?? 'false',
     dbPoolMax: integer('DB_POOL_MAX', 10),
-    jwtSecret: required('JWT_SECRET'),
+    jwtSecret,
+    integrationEncryptionKey: process.env.INTEGRATION_ENCRYPTION_KEY?.trim() || jwtSecret,
     jwtExpiresIn: process.env.JWT_EXPIRES_IN?.trim() || '8h',
     bcryptRounds: integer('BCRYPT_ROUNDS', 10),
     patientDefaultPassword: process.env.PATIENT_DEFAULT_PASSWORD?.trim() || 'odonto1234',

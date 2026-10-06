@@ -1,6 +1,7 @@
-import { env } from '../config/env';
+import { getWhatsAppRuntimeConfig } from '../modules/settings/integration.service';
 
 interface AppointmentWhatsAppInput {
+  empresaId: string;
   to: string;
   patientName: string;
   date: string;
@@ -16,6 +17,7 @@ interface WhatsAppResult {
 }
 
 interface RetentionWhatsAppInput {
+  empresaId: string;
   to: string;
   patientName: string;
   clinicName: string;
@@ -23,6 +25,7 @@ interface RetentionWhatsAppInput {
 }
 
 interface QuoteWhatsAppInput {
+  empresaId: string;
   to: string;
   patientName: string;
   clinicName: string;
@@ -31,8 +34,8 @@ interface QuoteWhatsAppInput {
 }
 
 export async function sendAppointmentWhatsApp(input: AppointmentWhatsAppInput): Promise<WhatsAppResult> {
-  const config = env.whatsapp;
-  if (!config.phoneNumberId || !config.accessToken || !config.appointmentTemplate) {
+  const config = await getWhatsAppRuntimeConfig(input.empresaId);
+  if (!config.active || !config.phoneNumberId || !config.accessToken || !config.appointmentTemplate) {
     return {
       status: 'pendente',
       error: 'Integracao WhatsApp aguardando credenciais e template.',
@@ -85,8 +88,8 @@ export async function sendAppointmentWhatsApp(input: AppointmentWhatsAppInput): 
 }
 
 export async function sendRetentionWhatsApp(input: RetentionWhatsAppInput): Promise<WhatsAppResult> {
-  const config = env.whatsapp;
-  if (!config.phoneNumberId || !config.accessToken || !config.retentionTemplate) {
+  const config = await getWhatsAppRuntimeConfig(input.empresaId);
+  if (!config.active || !config.phoneNumberId || !config.accessToken || !config.retentionTemplate) {
     return {
       status: 'pendente',
       error: 'Integracao WhatsApp aguardando credenciais e template de retencao.',
@@ -137,8 +140,8 @@ export async function sendRetentionWhatsApp(input: RetentionWhatsAppInput): Prom
 }
 
 export async function sendQuoteWhatsApp(input: QuoteWhatsAppInput): Promise<WhatsAppResult> {
-  const config = env.whatsapp;
-  if (!config.phoneNumberId || !config.accessToken || !config.quoteTemplate) {
+  const config = await getWhatsAppRuntimeConfig(input.empresaId);
+  if (!config.active || !config.phoneNumberId || !config.accessToken || !config.quoteTemplate) {
     return {
       status: 'pendente',
       error: 'Integracao WhatsApp aguardando credenciais e template de orcamento.',

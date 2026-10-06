@@ -75,6 +75,7 @@ async function sendScheduleNotification(eventId, kind, createdBy = null) {
         }
         else {
             const sent = await (0, whatsapp_service_1.sendAppointmentWhatsApp)({
+                empresaId: event.empresa_id,
                 to: phone,
                 patientName: event.paciente_nome.split(' ')[0],
                 date: content.date,

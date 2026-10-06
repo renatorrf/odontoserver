@@ -26,6 +26,7 @@ export const quoteReceiptSchema = z.object({
   idempotencyKey: z.string().uuid(),
   origem: z.enum(['contas_receber', 'agenda', 'financeiro_paciente', 'orcamento']).default('contas_receber'),
   agendamentoId: z.string().uuid().nullable().optional(),
+  justificativaRetroativa: z.string().trim().min(5).max(1000).optional(),
 }).superRefine((value, context) => {
   if (value.formaPagamento !== 'cartao_credito' && value.parcelasCartao != null) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['parcelasCartao'], message: 'Parcelas sao permitidas apenas no cartao de credito.' });

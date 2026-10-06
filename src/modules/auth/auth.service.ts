@@ -9,6 +9,12 @@ import { AuthContext } from '../../types/public';
 import { conflict, forbidden, unauthorized } from '../../utils/http-error';
 import { onlyDigits, optionalText } from '../../utils/normalize';
 import {
+  assignDefaultProfile,
+  ensureDefaultAccessProfiles,
+  getAccessPermissionsWithClient,
+} from '../access/access-control.service';
+import { PermissionKey } from '../access/permission-catalog';
+import {
   BootstrapGestorInput,
   ChangePasswordInput,
   CreateGestorInput,
@@ -47,6 +53,7 @@ interface AuthenticatedSession {
     empresaNome: string;
     senhaTemporaria: boolean;
     pacienteId: string | null;
+    permissoes: PermissionKey[];
   };
 }
 
@@ -115,7 +122,12 @@ function signSession(row: MembershipRow): { token: string; jwtId: string; expire
   };
 }
 
-function toAuthenticatedSession(row: MembershipRow, token: string, expiresAt: Date): AuthenticatedSession {
+function toAuthenticatedSession(
+  row: MembershipRow,
+  token: string,
+  expiresAt: Date,
+  permissions: PermissionKey[],
+): AuthenticatedSession {
   return {
     token,
     expiresAt: expiresAt.toISOString(),
@@ -130,6 +142,7 @@ function toAuthenticatedSession(row: MembershipRow, token: string, expiresAt: Da
       empresaNome: row.nome_fantasia,
       senhaTemporaria: row.senha_temporaria,
       pacienteId: row.paciente_id,
+      permissoes: permissions,
     },
   };
 }
@@ -139,10 +152,14 @@ async function createSession(row: MembershipRow): Promise<AuthenticatedSession> 
     const session = signSession(row);
     const auth = mapMembership(row);
 
+    const profiles = await ensureDefaultAccessProfiles(client, auth.empresaId, auth.usuarioId);
+    await assignDefaultProfile(client, auth, profiles);
+    const permissions = await getAccessPermissionsWithClient(client, auth);
+
     await saveSession(client, auth, session.jwtId, session.expiresAt);
     await client.query('update odonto.usuarios set ultimo_acesso_em = now() where id = $1', [auth.usuarioId]);
 
-    return toAuthenticatedSession(row, session.token, session.expiresAt);
+    return toAuthenticatedSession(row, session.token, session.expiresAt, permissions);
   });
 }
 
@@ -230,9 +247,12 @@ export async function bootstrapGestor(input: BootstrapGestorInput): Promise<Auth
     };
 
     const session = signSession(row);
+    const profiles = await ensureDefaultAccessProfiles(client, empresa.id, usuario.id);
+    await assignDefaultProfile(client, mapMembership(row), profiles);
+    const permissions = await getAccessPermissionsWithClient(client, mapMembership(row));
     await saveSession(client, mapMembership(row), session.jwtId, session.expiresAt);
 
-    return toAuthenticatedSession(row, session.token, session.expiresAt);
+    return toAuthenticatedSession(row, session.token, session.expiresAt, permissions);
   }).catch((error: { code?: string }) => {
     if (error.code === '23505') {
       throw conflict('Empresa, login, email ou CPF ja cadastrado.');
@@ -451,6 +471,7 @@ export async function requestPasswordReset(input: PasswordResetRequestInput): Pr
   );
 
   await sendMail({
+    empresaId: user.empresa_id,
     to: user.email_destino,
     subject: 'Redefinicao de senha - Odonto PWA',
     text: `Ola, ${user.nome}. Acesse ${resetUrl} para redefinir sua senha. O link expira em 30 minutos.`,

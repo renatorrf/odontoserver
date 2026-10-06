@@ -19,6 +19,9 @@ const professional_routes_1 = __importDefault(require("./modules/professionals/p
 const procedure_routes_1 = __importDefault(require("./modules/procedures/procedure.routes"));
 const projection_routes_1 = __importDefault(require("./modules/projection/projection.routes"));
 const schedule_routes_1 = __importDefault(require("./modules/schedule/schedule.routes"));
+const settings_routes_1 = __importDefault(require("./modules/settings/settings.routes"));
+const access_routes_1 = __importDefault(require("./modules/access/access.routes"));
+const permissions_1 = require("./middlewares/permissions");
 const http_error_1 = require("./utils/http-error");
 exports.app = (0, express_1.default)();
 exports.app.use((0, cors_1.default)({
@@ -33,13 +36,15 @@ exports.app.get('/health', (_req, res) => {
     });
 });
 exports.app.use('/api/auth', auth_routes_1.default);
-exports.app.use('/api/pacientes', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista', 'atendente']), patient_routes_1.default);
-exports.app.use('/api/profissionais', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor']), professional_routes_1.default);
-exports.app.use('/api/agenda', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista', 'atendente']), schedule_routes_1.default);
-exports.app.use('/api/procedimentos', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista', 'atendente']), procedure_routes_1.default);
-exports.app.use('/api/financeiro', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor']), finance_routes_1.default);
-exports.app.use('/api/projecao', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor']), projection_routes_1.default);
-exports.app.use('/api/comercial', auth_1.authenticate, (0, auth_1.requirePerfil)(['portal_admin', 'gestor']), commercial_routes_1.default);
+exports.app.use('/api/pacientes', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.pacientes'), patient_routes_1.default);
+exports.app.use('/api/profissionais', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.profissionais'), (0, permissions_1.requireWritePermission)('profissionais.editar'), professional_routes_1.default);
+exports.app.use('/api/agenda', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.agenda'), (0, permissions_1.requireWritePermission)('agenda.editar'), schedule_routes_1.default);
+exports.app.use('/api/procedimentos', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.procedimentos'), procedure_routes_1.default);
+exports.app.use('/api/financeiro', auth_1.authenticate, finance_routes_1.default);
+exports.app.use('/api/projecao', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.projecao'), (0, permissions_1.requireWritePermission)('projecao.notificar'), projection_routes_1.default);
+exports.app.use('/api/comercial', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.comercial'), (0, permissions_1.requireWritePermission)('comercial.editar'), commercial_routes_1.default);
+exports.app.use('/api/configuracoes', auth_1.authenticate, (0, permissions_1.requirePermission)('menu.configuracoes'), (0, permissions_1.requireWritePermission)('configuracoes.integracoes.editar'), settings_routes_1.default);
+exports.app.use('/api/acessos', auth_1.authenticate, access_routes_1.default);
 exports.app.use('/api/cliente', auth_1.authenticate, (0, auth_1.requirePerfil)(['paciente']), client_routes_1.default);
 exports.app.use((_req, res) => {
     res.status(404).json({

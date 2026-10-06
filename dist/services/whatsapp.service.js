@@ -3,10 +3,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendAppointmentWhatsApp = sendAppointmentWhatsApp;
 exports.sendRetentionWhatsApp = sendRetentionWhatsApp;
 exports.sendQuoteWhatsApp = sendQuoteWhatsApp;
-const env_1 = require("../config/env");
+const integration_service_1 = require("../modules/settings/integration.service");
 async function sendAppointmentWhatsApp(input) {
-    const config = env_1.env.whatsapp;
-    if (!config.phoneNumberId || !config.accessToken || !config.appointmentTemplate) {
+    const config = await (0, integration_service_1.getWhatsAppRuntimeConfig)(input.empresaId);
+    if (!config.active || !config.phoneNumberId || !config.accessToken || !config.appointmentTemplate) {
         return {
             status: 'pendente',
             error: 'Integracao WhatsApp aguardando credenciais e template.',
@@ -55,8 +55,8 @@ async function sendAppointmentWhatsApp(input) {
     }
 }
 async function sendRetentionWhatsApp(input) {
-    const config = env_1.env.whatsapp;
-    if (!config.phoneNumberId || !config.accessToken || !config.retentionTemplate) {
+    const config = await (0, integration_service_1.getWhatsAppRuntimeConfig)(input.empresaId);
+    if (!config.active || !config.phoneNumberId || !config.accessToken || !config.retentionTemplate) {
         return {
             status: 'pendente',
             error: 'Integracao WhatsApp aguardando credenciais e template de retencao.',
@@ -103,8 +103,8 @@ async function sendRetentionWhatsApp(input) {
     }
 }
 async function sendQuoteWhatsApp(input) {
-    const config = env_1.env.whatsapp;
-    if (!config.phoneNumberId || !config.accessToken || !config.quoteTemplate) {
+    const config = await (0, integration_service_1.getWhatsAppRuntimeConfig)(input.empresaId);
+    if (!config.active || !config.phoneNumberId || !config.accessToken || !config.quoteTemplate) {
         return {
             status: 'pendente',
             error: 'Integracao WhatsApp aguardando credenciais e template de orcamento.',

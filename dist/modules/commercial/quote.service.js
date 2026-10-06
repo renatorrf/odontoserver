@@ -391,6 +391,7 @@ async function sendQuote(auth, quoteId, input) {
         }
         else {
             const result = await (0, whatsapp_service_1.sendQuoteWhatsApp)({
+                empresaId: auth.empresaId,
                 to: phone,
                 patientName: firstName,
                 clinicName: quote.empresa_nome,

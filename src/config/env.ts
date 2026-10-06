@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const jwtSecret = required('JWT_SECRET');
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
 
@@ -37,7 +39,8 @@ export const env = {
   databaseUrl: required('DATABASE_URL'),
   dbSsl: process.env.DB_SSL?.trim().toLowerCase() ?? 'false',
   dbPoolMax: integer('DB_POOL_MAX', 10),
-  jwtSecret: required('JWT_SECRET'),
+  jwtSecret,
+  integrationEncryptionKey: process.env.INTEGRATION_ENCRYPTION_KEY?.trim() || jwtSecret,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN?.trim() || '8h',
   bcryptRounds: integer('BCRYPT_ROUNDS', 10),
   patientDefaultPassword: process.env.PATIENT_DEFAULT_PASSWORD?.trim() || 'odonto1234',

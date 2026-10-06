@@ -3,6 +3,7 @@ import { patientDentalContext } from '../dental/dental.service';
 import { Router } from 'express';
 import multer from 'multer';
 import { requirePerfil } from '../../middlewares/auth';
+import { requirePermission } from '../../middlewares/permissions';
 import { asyncHandler } from '../../utils/async-handler';
 import { createPatientSchema, patientIdParamSchema, patientListQuerySchema } from './patient.schemas';
 import { createPatient, getPatient, inactivatePatient, listPatients, updatePatient } from './patient.service';
@@ -62,6 +63,7 @@ router.get(
 
 router.post(
   '/',
+  requirePermission('pacientes.editar'),
   asyncHandler(async (req, res) => {
     const payload = createPatientSchema.parse(req.body);
     const patient = await createPatient(req.auth!, payload);
@@ -89,14 +91,14 @@ router.get('/:id/orcamentos', asyncHandler(async (req, res) => {
   res.json({ success: true, orcamentos: await listPatientQuotes(req.auth!, id) });
 }));
 
-router.post('/:id/orcamentos/:quoteId/duplicar', asyncHandler(async (req, res) => {
+router.post('/:id/orcamentos/:quoteId/duplicar', requirePermission('comercial.editar'), asyncHandler(async (req, res) => {
   const { id, quoteId } = patientQuoteParamsSchema.parse(req.params);
   const { justificativa } = z.object({justificativa:z.string().trim().max(1000).optional()}).parse(req.body);
   const orcamento = await duplicatePatientQuote(req.auth!, id, quoteId, justificativa);
   res.status(201).json({ success: true, orcamento });
 }));
 
-router.patch('/:id/orcamentos/:quoteId/itens/:itemId/status', asyncHandler(async (req, res) => {
+router.patch('/:id/orcamentos/:quoteId/itens/:itemId/status', requirePermission('comercial.editar'), asyncHandler(async (req, res) => {
   const { id, quoteId, itemId } = patientQuoteItemParamsSchema.parse(req.params);
   const { status } = quoteItemStatusSchema.parse(req.body);
   await updateQuoteItemStatus(req.auth!, id, quoteId, itemId, status);
@@ -106,6 +108,7 @@ router.patch('/:id/orcamentos/:quoteId/itens/:itemId/status', asyncHandler(async
 router.get(
   '/:id/financeiro',
   requirePerfil(['portal_admin', 'gestor']),
+  requirePermission('financeiro.recebimentos.registrar'),
   asyncHandler(async (req, res) => {
     const { id } = patientIdParamSchema.parse(req.params);
     res.json({ success: true, ...(await listPatientFinancial(req.auth!, id)) });
@@ -132,12 +135,12 @@ router.get('/:id/documentos-clinicos', asyncHandler(async (req, res) => {
   res.json({ success: true, documentos: await listClinicalDocuments(req.auth!, id) });
 }));
 
-router.post('/:id/documentos-clinicos', requirePerfil(['portal_admin','gestor','dentista']), asyncHandler(async (req, res) => {
+router.post('/:id/documentos-clinicos', requirePerfil(['portal_admin','gestor','dentista']), requirePermission('pacientes.clinico.editar'), asyncHandler(async (req, res) => {
   const { id } = patientIdParamSchema.parse(req.params);
   res.status(201).json({ success: true, documento: await createClinicalDocument(req.auth!, id, clinicalDocumentSchema.parse(req.body)) });
 }));
 
-router.put('/:id/documentos-clinicos/:documentId', requirePerfil(['portal_admin','gestor','dentista']), asyncHandler(async (req, res) => {
+router.put('/:id/documentos-clinicos/:documentId', requirePerfil(['portal_admin','gestor','dentista']), requirePermission('pacientes.clinico.editar'), asyncHandler(async (req, res) => {
   const { id, documentId } = patientDocumentParamsSchema.parse(req.params);
   await updateClinicalDocument(req.auth!, id, documentId, clinicalDocumentSchema.parse(req.body));
   res.json({ success: true, message: 'Documento clinico atualizado.' });
@@ -145,6 +148,7 @@ router.put('/:id/documentos-clinicos/:documentId', requirePerfil(['portal_admin'
 
 router.post(
   '/:id/documentos',
+  requirePermission('pacientes.editar'),
   documentUpload.single('arquivo'),
   asyncHandler(async (req, res) => {
     const { id } = patientIdParamSchema.parse(req.params);
@@ -158,13 +162,13 @@ router.post(
   }),
 );
 
-router.put('/:id/documentos/:documentId', asyncHandler(async (req, res) => {
+router.put('/:id/documentos/:documentId', requirePermission('pacientes.editar'), asyncHandler(async (req, res) => {
   const { id, documentId } = patientDocumentParamsSchema.parse(req.params);
   await updatePatientDocument(req.auth!, id, documentId, patientDocumentUpdateSchema.parse(req.body));
   res.json({ success: true, message: 'Documento atualizado.' });
 }));
 
-router.delete('/:id/documentos/:documentId', asyncHandler(async (req, res) => {
+router.delete('/:id/documentos/:documentId', requirePermission('pacientes.editar'), asyncHandler(async (req, res) => {
   const { id, documentId } = patientDocumentParamsSchema.parse(req.params);
   await deletePatientDocument(req.auth!, id, documentId);
   res.json({ success: true, message: 'Documento excluido.' });
@@ -180,6 +184,7 @@ router.get('/:id/documentos/:documentId/arquivo', asyncHandler(async (req, res) 
 router.get(
   '/:id/anamnese',
   requirePerfil(['portal_admin', 'gestor', 'dentista']),
+  requirePermission('pacientes.clinico.editar'),
   asyncHandler(async (req, res) => {
     const { id } = patientIdParamSchema.parse(req.params);
     res.json({ success: true, ...(await listPatientAnamneses(req.auth!, id)) });
@@ -209,6 +214,7 @@ router.get('/:id/timeline', asyncHandler(async (req, res) => {
 
 router.get(
   '/:id',
+  requirePermission('pacientes.editar'),
   asyncHandler(async (req, res) => {
     const params = patientIdParamSchema.parse(req.params);
     const patient = await getPatient(req.auth!, params.id);
@@ -236,6 +242,7 @@ router.put(
 
 router.patch(
   '/:id/inativar',
+  requirePermission('pacientes.editar'),
   asyncHandler(async (req, res) => {
     const params = patientIdParamSchema.parse(req.params);
     await inactivatePatient(req.auth!, params.id);

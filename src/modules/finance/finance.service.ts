@@ -1,7 +1,10 @@
 import { PoolClient } from 'pg';
 import { query, transaction } from '../../database/pool';
 import { AuthContext } from '../../types/public';
-import { conflict, notFound } from '../../utils/http-error';
+import { conflict, forbidden, notFound } from '../../utils/http-error';
+import { hasAccessPermission } from '../access/access-control.service';
+import { createApprovalRequest } from '../access/approval-request.service';
+import { ApprovalExecutionContext, isRetroactiveDate } from '../access/financial-approval';
 import { BillProceduresInput, FinanceStatementQuery, PaymentStatusInput } from './finance.schemas';
 
 interface StatementRow {
@@ -254,7 +257,22 @@ export async function updatePaymentStatus(
   auth: AuthContext,
   id: string,
   input: PaymentStatusInput,
-): Promise<void> {
+  approval?: ApprovalExecutionContext,
+) {
+  if (input.status === 'pago' && isRetroactiveDate(input.pagoEm) && !approval) {
+    if (!(await hasAccessPermission(auth, 'financeiro.pagamentos.retroativo.solicitar'))) {
+      throw forbidden('Seu perfil nao pode solicitar pagamentos retroativos.');
+    }
+    const request = await createApprovalRequest(
+      auth,
+      'pagamento_profissional_retroativo',
+      'financeiro_lancamento',
+      id,
+      { id, input },
+      input.justificativaRetroativa ?? '',
+    );
+    return { pendenteAprovacao: true as const, solicitacaoId: request.id, status: request.status };
+  }
   await transaction(async (client) => {
     if (input.bancoId) {
       const bank = await client.query('select 1 from odonto.bancos where id = $1 and empresa_id = $2 limit 1', [
@@ -293,5 +311,13 @@ export async function updatePaymentStatus(
     if (!result.rowCount) {
       throw notFound('Lancamento financeiro nao encontrado.');
     }
+    await client.query(`insert into odonto.audit_logs
+      (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
+      values ($1, $2, 'financeiro_lancamento', $3, $4, $5::jsonb)`, [auth.empresaId, auth.usuarioId,
+      id, input.status === 'pago' ? 'pagamento_confirmado' : 'pagamento_reaberto', JSON.stringify({
+        status: input.status, pagoEm: input.pagoEm ?? null, bancoId: input.bancoId ?? null,
+        solicitacaoAprovacaoId: approval?.approvalId ?? null, aprovadoPor: approval?.approvedBy ?? null,
+      })]);
   });
+  return { pendenteAprovacao: false as const };
 }

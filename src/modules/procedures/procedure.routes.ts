@@ -4,6 +4,7 @@ import { transaction } from '../../database/pool';
 import { teethSchema } from '../dental/dental.rules';
 import { correctExtraction } from '../dental/dental.service';
 import { asyncHandler } from '../../utils/async-handler';
+import { requirePermission } from '../../middlewares/permissions';
 import {
   catalogProcedureIdSchema,
   catalogProcedureListQuerySchema,
@@ -23,7 +24,7 @@ import {
 } from './procedure.service';
 
 const router = Router();
-router.patch('/realizados/:id/dentes', asyncHandler(async (req,res)=>{
+router.patch('/realizados/:id/dentes', requirePermission('pacientes.clinico.editar'), asyncHandler(async (req,res)=>{
   const {id}=catalogProcedureIdSchema.parse(req.params);
   const input=z.object({dentes:teethSchema,justificativa:z.string().trim().min(3).max(1000)}).parse(req.body);
   await transaction((client)=>correctExtraction(client,req.auth!,id,input.dentes,input.justificativa));
@@ -35,7 +36,7 @@ router.get('/catalogo', asyncHandler(async (req, res) => {
   res.json({ success: true, procedimentos: await listCatalogProcedures(req.auth!, input) });
 }));
 
-router.post('/catalogo', asyncHandler(async (req, res) => {
+router.post('/catalogo', requirePermission('procedimentos.editar'), asyncHandler(async (req, res) => {
   const input = catalogProcedureSchema.parse(req.body);
   res.status(201).json({ success: true, procedimento: await createCatalogProcedure(req.auth!, input) });
 }));
@@ -45,13 +46,13 @@ router.get('/catalogo/:id', asyncHandler(async (req, res) => {
   res.json({ success: true, procedimento: await getCatalogProcedure(req.auth!, id) });
 }));
 
-router.put('/catalogo/:id', asyncHandler(async (req, res) => {
+router.put('/catalogo/:id', requirePermission('procedimentos.editar'), asyncHandler(async (req, res) => {
   const { id } = catalogProcedureIdSchema.parse(req.params);
   const input = catalogProcedureSchema.parse(req.body);
   res.json({ success: true, procedimento: await updateCatalogProcedure(req.auth!, id, input) });
 }));
 
-router.patch('/catalogo/:id/status', asyncHandler(async (req, res) => {
+router.patch('/catalogo/:id/status', requirePermission('procedimentos.editar'), asyncHandler(async (req, res) => {
   const { id } = catalogProcedureIdSchema.parse(req.params);
   const input = catalogProcedureStatusSchema.parse(req.body);
   await updateCatalogProcedureStatus(req.auth!, id, input);
@@ -73,6 +74,7 @@ router.get(
 
 router.post(
   '/',
+  requirePermission('pacientes.clinico.editar'),
   asyncHandler(async (req, res) => {
     const payload = createProcedureSchema.parse(req.body);
     const procedure = await createProcedure(req.auth!, payload);

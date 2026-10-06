@@ -491,6 +491,7 @@ export async function sendQuote(auth: AuthContext, quoteId: string, input: Quote
       whatsappError = 'WhatsApp invalido.';
     } else {
       const result = await sendQuoteWhatsApp({
+        empresaId: auth.empresaId,
         to: phone,
         patientName: firstName,
         clinicName: quote.empresa_nome,

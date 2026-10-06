@@ -227,6 +227,7 @@ async function sendProjectionNotification(auth, eventId, input) {
                 }
                 else {
                     const result = await (0, whatsapp_service_1.sendAppointmentWhatsApp)({
+                        empresaId: auth.empresaId,
                         to: phone,
                         patientName: event.paciente_nome.split(' ')[0],
                         date: content.date,

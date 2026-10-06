@@ -51,6 +51,7 @@ const pool_1 = require("../../database/pool");
 const email_service_1 = require("../../services/email.service");
 const http_error_1 = require("../../utils/http-error");
 const normalize_1 = require("../../utils/normalize");
+const access_control_service_1 = require("../access/access-control.service");
 function normalizeLogin(login) {
     return login.trim().toLowerCase();
 }
@@ -101,7 +102,7 @@ function signSession(row) {
         expiresAt: new Date(decoded.exp * 1000),
     };
 }
-function toAuthenticatedSession(row, token, expiresAt) {
+function toAuthenticatedSession(row, token, expiresAt, permissions) {
     return {
         token,
         expiresAt: expiresAt.toISOString(),
@@ -116,6 +117,7 @@ function toAuthenticatedSession(row, token, expiresAt) {
             empresaNome: row.nome_fantasia,
             senhaTemporaria: row.senha_temporaria,
             pacienteId: row.paciente_id,
+            permissoes: permissions,
         },
     };
 }
@@ -123,9 +125,12 @@ async function createSession(row) {
     return (0, pool_1.transaction)(async (client) => {
         const session = signSession(row);
         const auth = mapMembership(row);
+        const profiles = await (0, access_control_service_1.ensureDefaultAccessProfiles)(client, auth.empresaId, auth.usuarioId);
+        await (0, access_control_service_1.assignDefaultProfile)(client, auth, profiles);
+        const permissions = await (0, access_control_service_1.getAccessPermissionsWithClient)(client, auth);
         await saveSession(client, auth, session.jwtId, session.expiresAt);
         await client.query('update odonto.usuarios set ultimo_acesso_em = now() where id = $1', [auth.usuarioId]);
-        return toAuthenticatedSession(row, session.token, session.expiresAt);
+        return toAuthenticatedSession(row, session.token, session.expiresAt, permissions);
     });
 }
 async function bootstrapGestor(input) {
@@ -198,8 +203,11 @@ async function bootstrapGestor(input) {
             nome_fantasia: empresa.nome_fantasia,
         };
         const session = signSession(row);
+        const profiles = await (0, access_control_service_1.ensureDefaultAccessProfiles)(client, empresa.id, usuario.id);
+        await (0, access_control_service_1.assignDefaultProfile)(client, mapMembership(row), profiles);
+        const permissions = await (0, access_control_service_1.getAccessPermissionsWithClient)(client, mapMembership(row));
         await saveSession(client, mapMembership(row), session.jwtId, session.expiresAt);
-        return toAuthenticatedSession(row, session.token, session.expiresAt);
+        return toAuthenticatedSession(row, session.token, session.expiresAt, permissions);
     }).catch((error) => {
         if (error.code === '23505') {
             throw (0, http_error_1.conflict)('Empresa, login, email ou CPF ja cadastrado.');
@@ -363,6 +371,7 @@ async function requestPasswordReset(input) {
       values ($1, $2, $3, now() + interval '30 minutes')
     `, [user.usuario_id, user.empresa_id, tokenHash]);
     await (0, email_service_1.sendMail)({
+        empresaId: user.empresa_id,
         to: user.email_destino,
         subject: 'Redefinicao de senha - Odonto PWA',
         text: `Ola, ${user.nome}. Acesse ${resetUrl} para redefinir sua senha. O link expira em 30 minutos.`,

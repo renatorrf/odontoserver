@@ -6,10 +6,11 @@ const pool_1 = require("../../database/pool");
 const dental_rules_1 = require("../dental/dental.rules");
 const dental_service_1 = require("../dental/dental.service");
 const async_handler_1 = require("../../utils/async-handler");
+const permissions_1 = require("../../middlewares/permissions");
 const procedure_schemas_1 = require("./procedure.schemas");
 const procedure_service_1 = require("./procedure.service");
 const router = (0, express_1.Router)();
-router.patch('/realizados/:id/dentes', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.patch('/realizados/:id/dentes', (0, permissions_1.requirePermission)('pacientes.clinico.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = procedure_schemas_1.catalogProcedureIdSchema.parse(req.params);
     const input = zod_1.z.object({ dentes: dental_rules_1.teethSchema, justificativa: zod_1.z.string().trim().min(3).max(1000) }).parse(req.body);
     await (0, pool_1.transaction)((client) => (0, dental_service_1.correctExtraction)(client, req.auth, id, input.dentes, input.justificativa));
@@ -19,7 +20,7 @@ router.get('/catalogo', (0, async_handler_1.asyncHandler)(async (req, res) => {
     const input = procedure_schemas_1.catalogProcedureListQuerySchema.parse(req.query);
     res.json({ success: true, procedimentos: await (0, procedure_service_1.listCatalogProcedures)(req.auth, input) });
 }));
-router.post('/catalogo', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.post('/catalogo', (0, permissions_1.requirePermission)('procedimentos.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const input = procedure_schemas_1.catalogProcedureSchema.parse(req.body);
     res.status(201).json({ success: true, procedimento: await (0, procedure_service_1.createCatalogProcedure)(req.auth, input) });
 }));
@@ -27,12 +28,12 @@ router.get('/catalogo/:id', (0, async_handler_1.asyncHandler)(async (req, res) =
     const { id } = procedure_schemas_1.catalogProcedureIdSchema.parse(req.params);
     res.json({ success: true, procedimento: await (0, procedure_service_1.getCatalogProcedure)(req.auth, id) });
 }));
-router.put('/catalogo/:id', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.put('/catalogo/:id', (0, permissions_1.requirePermission)('procedimentos.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = procedure_schemas_1.catalogProcedureIdSchema.parse(req.params);
     const input = procedure_schemas_1.catalogProcedureSchema.parse(req.body);
     res.json({ success: true, procedimento: await (0, procedure_service_1.updateCatalogProcedure)(req.auth, id, input) });
 }));
-router.patch('/catalogo/:id/status', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.patch('/catalogo/:id/status', (0, permissions_1.requirePermission)('procedimentos.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = procedure_schemas_1.catalogProcedureIdSchema.parse(req.params);
     const input = procedure_schemas_1.catalogProcedureStatusSchema.parse(req.body);
     await (0, procedure_service_1.updateCatalogProcedureStatus)(req.auth, id, input);
@@ -46,7 +47,7 @@ router.get('/', (0, async_handler_1.asyncHandler)(async (req, res) => {
         procedures,
     });
 }));
-router.post('/', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.post('/', (0, permissions_1.requirePermission)('pacientes.clinico.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const payload = procedure_schemas_1.createProcedureSchema.parse(req.body);
     const procedure = await (0, procedure_service_1.createProcedure)(req.auth, payload);
     res.status(201).json({

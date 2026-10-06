@@ -327,6 +327,7 @@ export async function sendProjectionNotification(
           error = 'Paciente sem celular cadastrado.';
         } else {
           const result = await sendAppointmentWhatsApp({
+            empresaId: auth.empresaId,
             to: phone,
             patientName: event.paciente_nome.split(' ')[0],
             date: content.date,

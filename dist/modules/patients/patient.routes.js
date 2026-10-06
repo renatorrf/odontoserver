@@ -8,6 +8,7 @@ const dental_service_1 = require("../dental/dental.service");
 const express_1 = require("express");
 const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("../../middlewares/auth");
+const permissions_1 = require("../../middlewares/permissions");
 const async_handler_1 = require("../../utils/async-handler");
 const patient_schemas_1 = require("./patient.schemas");
 const patient_service_1 = require("./patient.service");
@@ -26,7 +27,7 @@ router.get('/', (0, async_handler_1.asyncHandler)(async (req, res) => {
         patients,
     });
 }));
-router.post('/', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.post('/', (0, permissions_1.requirePermission)('pacientes.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const payload = patient_schemas_1.createPatientSchema.parse(req.body);
     const patient = await (0, patient_service_1.createPatient)(req.auth, payload);
     res.status(201).json({
@@ -47,19 +48,19 @@ router.get('/:id/orcamentos', (0, async_handler_1.asyncHandler)(async (req, res)
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, orcamentos: await (0, patient_tabs_service_1.listPatientQuotes)(req.auth, id) });
 }));
-router.post('/:id/orcamentos/:quoteId/duplicar', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.post('/:id/orcamentos/:quoteId/duplicar', (0, permissions_1.requirePermission)('comercial.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id, quoteId } = patient_tabs_schemas_1.patientQuoteParamsSchema.parse(req.params);
     const { justificativa } = zod_1.z.object({ justificativa: zod_1.z.string().trim().max(1000).optional() }).parse(req.body);
     const orcamento = await (0, patient_tabs_service_1.duplicatePatientQuote)(req.auth, id, quoteId, justificativa);
     res.status(201).json({ success: true, orcamento });
 }));
-router.patch('/:id/orcamentos/:quoteId/itens/:itemId/status', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.patch('/:id/orcamentos/:quoteId/itens/:itemId/status', (0, permissions_1.requirePermission)('comercial.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id, quoteId, itemId } = patient_tabs_schemas_1.patientQuoteItemParamsSchema.parse(req.params);
     const { status } = patient_tabs_schemas_1.quoteItemStatusSchema.parse(req.body);
     await (0, patient_tabs_service_1.updateQuoteItemStatus)(req.auth, id, quoteId, itemId, status);
     res.json({ success: true, message: 'Status do procedimento atualizado.' });
 }));
-router.get('/:id/financeiro', (0, auth_1.requirePerfil)(['portal_admin', 'gestor']), (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.get('/:id/financeiro', (0, auth_1.requirePerfil)(['portal_admin', 'gestor']), (0, permissions_1.requirePermission)('financeiro.recebimentos.registrar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, ...(await (0, patient_tabs_service_1.listPatientFinancial)(req.auth, id)) });
 }));
@@ -76,26 +77,26 @@ router.get('/:id/documentos-clinicos', (0, async_handler_1.asyncHandler)(async (
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, documentos: await (0, patient_tabs_service_1.listClinicalDocuments)(req.auth, id) });
 }));
-router.post('/:id/documentos-clinicos', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.post('/:id/documentos-clinicos', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, permissions_1.requirePermission)('pacientes.clinico.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.status(201).json({ success: true, documento: await (0, patient_tabs_service_1.createClinicalDocument)(req.auth, id, patient_tabs_schemas_1.clinicalDocumentSchema.parse(req.body)) });
 }));
-router.put('/:id/documentos-clinicos/:documentId', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.put('/:id/documentos-clinicos/:documentId', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, permissions_1.requirePermission)('pacientes.clinico.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id, documentId } = patient_tabs_schemas_1.patientDocumentParamsSchema.parse(req.params);
     await (0, patient_tabs_service_1.updateClinicalDocument)(req.auth, id, documentId, patient_tabs_schemas_1.clinicalDocumentSchema.parse(req.body));
     res.json({ success: true, message: 'Documento clinico atualizado.' });
 }));
-router.post('/:id/documentos', documentUpload.single('arquivo'), (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.post('/:id/documentos', (0, permissions_1.requirePermission)('pacientes.editar'), documentUpload.single('arquivo'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     const documento = await (0, patient_tabs_service_1.savePatientDocument)(req.auth, id, req.file, patient_tabs_schemas_1.patientDocumentMetadataSchema.parse(req.body));
     res.status(201).json({ success: true, documento });
 }));
-router.put('/:id/documentos/:documentId', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.put('/:id/documentos/:documentId', (0, permissions_1.requirePermission)('pacientes.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id, documentId } = patient_tabs_schemas_1.patientDocumentParamsSchema.parse(req.params);
     await (0, patient_tabs_service_1.updatePatientDocument)(req.auth, id, documentId, patient_tabs_schemas_1.patientDocumentUpdateSchema.parse(req.body));
     res.json({ success: true, message: 'Documento atualizado.' });
 }));
-router.delete('/:id/documentos/:documentId', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.delete('/:id/documentos/:documentId', (0, permissions_1.requirePermission)('pacientes.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id, documentId } = patient_tabs_schemas_1.patientDocumentParamsSchema.parse(req.params);
     await (0, patient_tabs_service_1.deletePatientDocument)(req.auth, id, documentId);
     res.json({ success: true, message: 'Documento excluido.' });
@@ -106,7 +107,7 @@ router.get('/:id/documentos/:documentId/arquivo', (0, async_handler_1.asyncHandl
     res.type(file.mimeType);
     res.download(file.fullPath, file.fileName);
 }));
-router.get('/:id/anamnese', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.get('/:id/anamnese', (0, auth_1.requirePerfil)(['portal_admin', 'gestor', 'dentista']), (0, permissions_1.requirePermission)('pacientes.clinico.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, ...(await (0, patient_tabs_service_1.listPatientAnamneses)(req.auth, id)) });
 }));
@@ -124,7 +125,7 @@ router.get('/:id/timeline', (0, async_handler_1.asyncHandler)(async (req, res) =
     const { id } = patient_schemas_1.patientIdParamSchema.parse(req.params);
     res.json({ success: true, timeline: await (0, patient_tabs_service_1.listPatientTimeline)(req.auth, id) });
 }));
-router.get('/:id', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.get('/:id', (0, permissions_1.requirePermission)('pacientes.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const params = patient_schemas_1.patientIdParamSchema.parse(req.params);
     const patient = await (0, patient_service_1.getPatient)(req.auth, params.id);
     res.json({
@@ -141,7 +142,7 @@ router.put('/:id', (0, async_handler_1.asyncHandler)(async (req, res) => {
         patient,
     });
 }));
-router.patch('/:id/inativar', (0, async_handler_1.asyncHandler)(async (req, res) => {
+router.patch('/:id/inativar', (0, permissions_1.requirePermission)('pacientes.editar'), (0, async_handler_1.asyncHandler)(async (req, res) => {
     const params = patient_schemas_1.patientIdParamSchema.parse(req.params);
     await (0, patient_service_1.inactivatePatient)(req.auth, params.id);
     res.json({

@@ -235,6 +235,7 @@ async function sendRetentionContact(auth, patientId, input) {
         }
         else {
             const result = await (0, whatsapp_service_1.sendRetentionWhatsApp)({
+                empresaId: auth.empresaId,
                 to: phone,
                 patientName: firstName,
                 clinicName: patient.empresa_nome,

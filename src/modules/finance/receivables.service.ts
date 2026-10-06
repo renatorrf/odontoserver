@@ -1,6 +1,9 @@
 import { query, transaction } from '../../database/pool';
 import { AuthContext } from '../../types/public';
-import { badRequest, notFound } from '../../utils/http-error';
+import { badRequest, forbidden, notFound } from '../../utils/http-error';
+import { hasAccessPermission } from '../access/access-control.service';
+import { createApprovalRequest } from '../access/approval-request.service';
+import { ApprovalExecutionContext, isRetroactiveDate } from '../access/financial-approval';
 import { PaymentReversalInput, QuoteReceiptInput, ReceivablesQuery } from './receivables.schemas';
 import { calculateFinancialPosition } from './receivables.calculator';
 
@@ -102,7 +105,26 @@ export async function listReceivables(auth: AuthContext, input: ReceivablesQuery
     resumo:{quantidade:Number(row.quantidade),total:Number(row.total),recebido:Number(row.recebido),saldo:Number(row.saldo),vencido:Number(row.vencido)}};
 }
 
-export async function receiveQuote(auth: AuthContext, quoteId: string, input: QuoteReceiptInput) {
+export async function receiveQuote(
+  auth: AuthContext,
+  quoteId: string,
+  input: QuoteReceiptInput,
+  approval?: ApprovalExecutionContext,
+) {
+  if (isRetroactiveDate(input.recebidoEm) && !approval) {
+    if (!(await hasAccessPermission(auth, 'financeiro.recebimentos.retroativo.solicitar'))) {
+      throw forbidden('Seu perfil nao pode solicitar recebimentos retroativos.');
+    }
+    const request = await createApprovalRequest(
+      auth,
+      'recebimento_retroativo',
+      'orcamento',
+      quoteId,
+      { quoteId, input },
+      input.justificativaRetroativa ?? '',
+    );
+    return { pendenteAprovacao: true as const, solicitacaoId: request.id, status: request.status };
+  }
   try {
     return await transaction(async (client) => {
     const existingOperation = await client.query<{ id: string; valor: string }>(
@@ -184,6 +206,7 @@ export async function receiveQuote(auth: AuthContext, quoteId: string, input: Qu
         perfil: auth.perfil, pacienteId: current.paciente_id, orcamentoId: quoteId, agendamentoId: input.agendamentoId ?? null,
         recebimentoId: payment.rows[0].id, origem: input.origem, valor: input.valor, desconto: input.desconto,
         acrescimo: input.acrescimo, saldoAnterior: balance, saldoNovo: newBalance, formaPagamento: input.formaPagamento,
+        solicitacaoAprovacaoId: approval?.approvalId ?? null, aprovadoPor: approval?.approvedBy ?? null,
       })]);
     return { id: payment.rows[0].id, tituloId: entry.rows[0].id, valor: input.valor, valorPago: newPaid, saldo: newBalance, status, idempotente: false };
     });
@@ -196,7 +219,27 @@ export async function receiveQuote(auth: AuthContext, quoteId: string, input: Qu
   }
 }
 
-export async function reversePayment(auth: AuthContext, paymentId: string, input: PaymentReversalInput) {
+export async function reversePayment(
+  auth: AuthContext,
+  paymentId: string,
+  input: PaymentReversalInput,
+  approval?: ApprovalExecutionContext,
+) {
+  const paymentDate = await query<{ pago_em: string }>(`
+    select pago_em::text from odonto.paciente_financeiro_pagamentos
+     where id = $1 and empresa_id = $2 and estornado_em is null`, [paymentId, auth.empresaId]);
+  if (!paymentDate.rowCount) throw notFound('Recebimento nao encontrado.');
+  if (isRetroactiveDate(paymentDate.rows[0].pago_em) && !approval) {
+    const request = await createApprovalRequest(
+      auth,
+      'estorno_recebimento_retroativo',
+      'paciente_financeiro_pagamento',
+      paymentId,
+      { paymentId, input },
+      input.justificativa,
+    );
+    return { pendenteAprovacao: true as const, solicitacaoId: request.id, status: request.status };
+  }
   try {
     return await transaction(async (client) => {
     const payment = await client.query<{ id: string; lancamento_id: string; estornado_em: string | null; valor: string }>(`
@@ -225,7 +268,8 @@ export async function reversePayment(auth: AuthContext, paymentId: string, input
       values ($1, $2, 'paciente_financeiro_pagamento', $3, 'estorno', $4::jsonb)`, [auth.empresaId, auth.usuarioId,
       paymentId, JSON.stringify({ perfil: auth.perfil, pacienteId: title.rows[0].paciente_id, orcamentoId: title.rows[0].orcamento_id,
         tituloId: title.rows[0].id, recebimentoId: paymentId, origem: input.origem, tipo: input.tipo,
-        justificativa: input.justificativa, valor: Number(payment.rows[0].valor), saldoNovo: saldo })]);
+        justificativa: input.justificativa, valor: Number(payment.rows[0].valor), saldoNovo: saldo,
+        solicitacaoAprovacaoId: approval?.approvalId ?? null, aprovadoPor: approval?.approvedBy ?? null })]);
     return { id: paymentId, tituloId: title.rows[0].id, status, saldo, tipo: input.tipo };
     });
   } catch (error: unknown) {

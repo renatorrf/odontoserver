@@ -13,6 +13,9 @@ import professionalRoutes from './modules/professionals/professional.routes';
 import procedureRoutes from './modules/procedures/procedure.routes';
 import projectionRoutes from './modules/projection/projection.routes';
 import scheduleRoutes from './modules/schedule/schedule.routes';
+import settingsRoutes from './modules/settings/settings.routes';
+import accessRoutes from './modules/access/access.routes';
+import { requirePermission, requireWritePermission } from './middlewares/permissions';
 import { HttpError } from './utils/http-error';
 
 export const app = express();
@@ -37,45 +40,56 @@ app.use('/api/auth', authRoutes);
 app.use(
   '/api/pacientes',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor', 'dentista', 'atendente']),
+  requirePermission('menu.pacientes'),
   patientRoutes,
 );
 app.use(
   '/api/profissionais',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor']),
+  requirePermission('menu.profissionais'),
+  requireWritePermission('profissionais.editar'),
   professionalRoutes,
 );
 app.use(
   '/api/agenda',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor', 'dentista', 'atendente']),
+  requirePermission('menu.agenda'),
+  requireWritePermission('agenda.editar'),
   scheduleRoutes,
 );
 app.use(
   '/api/procedimentos',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor', 'dentista', 'atendente']),
+  requirePermission('menu.procedimentos'),
   procedureRoutes,
 );
 app.use(
   '/api/financeiro',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor']),
   financeRoutes,
 );
 app.use(
   '/api/projecao',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor']),
+  requirePermission('menu.projecao'),
+  requireWritePermission('projecao.notificar'),
   projectionRoutes,
 );
 app.use(
   '/api/comercial',
   authenticate,
-  requirePerfil(['portal_admin', 'gestor']),
+  requirePermission('menu.comercial'),
+  requireWritePermission('comercial.editar'),
   commercialRoutes,
 );
+app.use(
+  '/api/configuracoes',
+  authenticate,
+  requirePermission('menu.configuracoes'),
+  requireWritePermission('configuracoes.integracoes.editar'),
+  settingsRoutes,
+);
+app.use('/api/acessos', authenticate, accessRoutes);
 app.use('/api/cliente', authenticate, requirePerfil(['paciente']), clientRoutes);
 
 app.use((_req, res) => {

@@ -82,6 +82,7 @@ exports.expensePaymentSchema = zod_1.z.object({
     referenciaPagamento: optionalText,
     observacoes: optionalText,
     pagaEm: optionalDate,
+    justificativaRetroativa: zod_1.z.string().trim().min(5).max(1000).optional(),
 });
 exports.reportQuerySchema = zod_1.z.object({
     inicio: date,

@@ -5,6 +5,9 @@ exports.billProcedures = billProcedures;
 exports.updatePaymentStatus = updatePaymentStatus;
 const pool_1 = require("../../database/pool");
 const http_error_1 = require("../../utils/http-error");
+const access_control_service_1 = require("../access/access-control.service");
+const approval_request_service_1 = require("../access/approval-request.service");
+const financial_approval_1 = require("../access/financial-approval");
 function money(value) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -173,7 +176,14 @@ async function billProcedures(auth, input) {
         return result.rows.length;
     });
 }
-async function updatePaymentStatus(auth, id, input) {
+async function updatePaymentStatus(auth, id, input, approval) {
+    if (input.status === 'pago' && (0, financial_approval_1.isRetroactiveDate)(input.pagoEm) && !approval) {
+        if (!(await (0, access_control_service_1.hasAccessPermission)(auth, 'financeiro.pagamentos.retroativo.solicitar'))) {
+            throw (0, http_error_1.forbidden)('Seu perfil nao pode solicitar pagamentos retroativos.');
+        }
+        const request = await (0, approval_request_service_1.createApprovalRequest)(auth, 'pagamento_profissional_retroativo', 'financeiro_lancamento', id, { id, input }, input.justificativaRetroativa ?? '');
+        return { pendenteAprovacao: true, solicitacaoId: request.id, status: request.status };
+    }
     await (0, pool_1.transaction)(async (client) => {
         if (input.bancoId) {
             const bank = await client.query('select 1 from odonto.bancos where id = $1 and empresa_id = $2 limit 1', [
@@ -208,5 +218,13 @@ async function updatePaymentStatus(auth, id, input) {
         if (!result.rowCount) {
             throw (0, http_error_1.notFound)('Lancamento financeiro nao encontrado.');
         }
+        await client.query(`insert into odonto.audit_logs
+      (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
+      values ($1, $2, 'financeiro_lancamento', $3, $4, $5::jsonb)`, [auth.empresaId, auth.usuarioId,
+            id, input.status === 'pago' ? 'pagamento_confirmado' : 'pagamento_reaberto', JSON.stringify({
+                status: input.status, pagoEm: input.pagoEm ?? null, bancoId: input.bancoId ?? null,
+                solicitacaoAprovacaoId: approval?.approvalId ?? null, aprovadoPor: approval?.approvedBy ?? null,
+            })]);
     });
+    return { pendenteAprovacao: false };
 }

@@ -1,7 +1,10 @@
 import { PoolClient } from 'pg';
 import { query, transaction } from '../../database/pool';
 import { AuthContext } from '../../types/public';
-import { conflict, notFound } from '../../utils/http-error';
+import { conflict, forbidden, notFound } from '../../utils/http-error';
+import { hasAccessPermission } from '../access/access-control.service';
+import { createApprovalRequest } from '../access/approval-request.service';
+import { ApprovalExecutionContext, isRetroactiveDate } from '../access/financial-approval';
 import { optionalText } from '../../utils/normalize';
 import {
   BankInput,
@@ -484,7 +487,20 @@ export async function cancelExpense(auth: AuthContext, id: string, applyNext: bo
   });
 }
 
-export async function updateExpensePayment(auth: AuthContext, id: string, input: ExpensePaymentInput) {
+export async function updateExpensePayment(
+  auth: AuthContext,
+  id: string,
+  input: ExpensePaymentInput,
+  approval?: ApprovalExecutionContext,
+) {
+  if (input.status === 'paga' && isRetroactiveDate(input.pagaEm) && !approval) {
+    if (!(await hasAccessPermission(auth, 'financeiro.despesas.retroativo.solicitar'))) {
+      throw forbidden('Seu perfil nao pode solicitar pagamentos retroativos de despesas.');
+    }
+    const request = await createApprovalRequest(auth, 'pagamento_despesa_retroativo', 'despesa', id,
+      { id, input }, input.justificativaRetroativa ?? '');
+    return { pendenteAprovacao: true as const, solicitacaoId: request.id, status: request.status };
+  }
   await transaction(async (client) => {
     await ensureBank(client, auth, input.bancoId);
     const result = await client.query(
@@ -515,8 +531,15 @@ export async function updateExpensePayment(auth: AuthContext, id: string, input:
     if (!result.rowCount) {
       throw notFound('Despesa nao encontrada.');
     }
+    await client.query(`insert into odonto.audit_logs
+      (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
+      values ($1, $2, 'despesa', $3, $4, $5::jsonb)`, [auth.empresaId, auth.usuarioId, id,
+      input.status === 'paga' ? 'pagamento_confirmado' : 'pagamento_reaberto', JSON.stringify({
+        pagaEm: input.pagaEm ?? null, bancoId: input.bancoId ?? null,
+        solicitacaoAprovacaoId: approval?.approvalId ?? null, aprovadoPor: approval?.approvedBy ?? null,
+      })]);
   });
-  return mapExpense(await getExpenseRow(auth, id));
+  return { pendenteAprovacao: false as const, despesa: mapExpense(await getExpenseRow(auth, id)) };
 }
 
 export async function getOperationalCost(auth: AuthContext, input: ReportQuery) {

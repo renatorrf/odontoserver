@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
-import { env } from '../config/env';
+import { getSmtpRuntimeConfig } from '../modules/settings/integration.service';
 
 interface SendMailInput {
+  empresaId: string | null;
   to: string;
   subject: string;
   text: string;
@@ -9,7 +10,8 @@ interface SendMailInput {
 }
 
 export async function sendMail(input: SendMailInput): Promise<void> {
-  if (!env.smtp.host) {
+  const config = await getSmtpRuntimeConfig(input.empresaId);
+  if (!config.active || !config.host) {
     console.log('[email:dev]', {
       to: input.to,
       subject: input.subject,
@@ -19,19 +21,19 @@ export async function sendMail(input: SendMailInput): Promise<void> {
   }
 
   const transporter = nodemailer.createTransport({
-    host: env.smtp.host,
-    port: env.smtp.port,
-    secure: env.smtp.secure,
-    auth: env.smtp.user
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: config.user
       ? {
-          user: env.smtp.user,
-          pass: env.smtp.pass,
+          user: config.user,
+          pass: config.pass,
         }
       : undefined,
   });
 
   await transporter.sendMail({
-    from: env.smtp.from,
+    from: config.from,
     to: input.to,
     subject: input.subject,
     text: input.text,

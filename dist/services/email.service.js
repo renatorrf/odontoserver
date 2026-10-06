@@ -5,9 +5,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendMail = sendMail;
 const nodemailer_1 = __importDefault(require("nodemailer"));
-const env_1 = require("../config/env");
+const integration_service_1 = require("../modules/settings/integration.service");
 async function sendMail(input) {
-    if (!env_1.env.smtp.host) {
+    const config = await (0, integration_service_1.getSmtpRuntimeConfig)(input.empresaId);
+    if (!config.active || !config.host) {
         console.log('[email:dev]', {
             to: input.to,
             subject: input.subject,
@@ -16,18 +17,18 @@ async function sendMail(input) {
         return;
     }
     const transporter = nodemailer_1.default.createTransport({
-        host: env_1.env.smtp.host,
-        port: env_1.env.smtp.port,
-        secure: env_1.env.smtp.secure,
-        auth: env_1.env.smtp.user
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: config.user
             ? {
-                user: env_1.env.smtp.user,
-                pass: env_1.env.smtp.pass,
+                user: config.user,
+                pass: config.pass,
             }
             : undefined,
     });
     await transporter.sendMail({
-        from: env_1.env.smtp.from,
+        from: config.from,
         to: input.to,
         subject: input.subject,
         text: input.text,

@@ -30,6 +30,7 @@ export const paymentStatusSchema = z.object({
   referenciaPagamento: z.string().trim().max(180).nullable().optional(),
   observacoesPagamento: z.string().trim().max(1000).nullable().optional(),
   pagoEm: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  justificativaRetroativa: z.string().trim().min(5).max(1000).optional(),
 });
 
 export type FinanceStatementQuery = z.infer<typeof financeStatementQuerySchema>;

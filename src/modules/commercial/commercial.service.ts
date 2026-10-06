@@ -296,6 +296,7 @@ export async function sendRetentionContact(
       whatsappError = 'Paciente sem celular cadastrado.';
     } else {
       const result = await sendRetentionWhatsApp({
+        empresaId: auth.empresaId,
         to: phone,
         patientName: firstName,
         clinicName: patient.empresa_nome,
