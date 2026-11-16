@@ -7,11 +7,13 @@ exports.listPatients = listPatients;
 exports.getPatient = getPatient;
 exports.createPatient = createPatient;
 exports.createOrLinkMinimalPatient = createOrLinkMinimalPatient;
+exports.createOrLinkAgendaPreRegistration = createOrLinkAgendaPreRegistration;
 exports.updatePatient = updatePatient;
 exports.inactivatePatient = inactivatePatient;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const env_1 = require("../../config/env");
 const pool_1 = require("../../database/pool");
+const br_validation_1 = require("../../utils/br-validation");
 const http_error_1 = require("../../utils/http-error");
 const normalize_1 = require("../../utils/normalize");
 function trimState(value) {
@@ -575,6 +577,50 @@ async function createOrLinkMinimalPatient(client, auth, input) {
       celular = coalesce(odonto.paciente_contatos.celular, excluded.celular)`, [patient.id, (0, normalize_1.optionalText)(input.celular)]);
     await client.query(`insert into odonto.audit_logs (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
      values ($1, $2, 'pacientes', $3, $4, $5::jsonb)`, [auth.empresaId, auth.usuarioId, patient.id, existing.rowCount ? 'link_quote' : 'create_minimal', JSON.stringify({ cpf, origem: 'orcamento' })]);
+    return { id: patient.id, nome: patient.nome, cadastroIncompleto: patient.cadastro_incompleto };
+}
+async function createOrLinkAgendaPreRegistration(client, auth, input) {
+    const nome = input.nome.trim().replace(/\s+/g, ' ');
+    const whatsapp = input.whatsapp.trim();
+    const whatsappDigits = (0, normalize_1.onlyDigits)(whatsapp);
+    if (nome.length < 2) {
+        throw (0, http_error_1.badRequest)('Informe o nome do paciente.');
+    }
+    if (!(0, br_validation_1.hasValidPhoneLength)(whatsapp)) {
+        throw (0, http_error_1.badRequest)('Informe um WhatsApp valido para o pre-cadastro.');
+    }
+    const existing = await client.query(`select pac.id, pac.nome, pac.cadastro_incompleto
+       from odonto.pacientes pac
+       join odonto.paciente_contatos pct on pct.paciente_id = pac.id
+      where pac.empresa_id = $1
+        and pac.status = 'ativo'
+        and lower(trim(pac.nome)) = lower($2::text)
+        and regexp_replace(coalesce(pct.celular, ''), '\\D', '', 'g') = $3
+      order by pac.created_at desc
+      limit 1
+      for update of pac`, [auth.empresaId, nome, whatsappDigits]);
+    let patient = existing.rows[0];
+    if (!patient) {
+        const created = await client.query(`insert into odonto.pacientes (
+         empresa_id, nome, sexo, observacoes, cadastro_incompleto, created_by, updated_by
+       ) values (
+         $1, $2, 'nao_informado',
+         'Pre-cadastro criado durante o agendamento.', true, $3, $3
+       )
+       returning id, nome, cadastro_incompleto`, [auth.empresaId, nome, auth.usuarioId]);
+        patient = created.rows[0];
+        await client.query(`insert into odonto.paciente_contatos (
+         paciente_id, celular_pais, celular, usar_celular_contato, nao_possui_email
+       ) values ($1, 'BR', $2, false, true)`, [patient.id, whatsapp]);
+    }
+    await client.query(`insert into odonto.audit_logs (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
+     values ($1, $2, 'pacientes', $3, $4, $5::jsonb)`, [
+        auth.empresaId,
+        auth.usuarioId,
+        patient.id,
+        existing.rowCount ? 'link_schedule' : 'create_minimal',
+        JSON.stringify({ origem: 'agenda' }),
+    ]);
     return { id: patient.id, nome: patient.nome, cadastroIncompleto: patient.cadastro_incompleto };
 }
 async function updatePatient(auth, patientId, input) {

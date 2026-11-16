@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasValidPhoneLength } from '../../utils/br-validation';
 import { teethSchema } from '../dental/dental.rules';
 import { scheduleStatuses } from './schedule-status';
 
@@ -18,6 +19,11 @@ const optionalDate = z.preprocess(
 );
 
 const dateTime = z.string().datetime({ offset: true });
+
+const patientPreRegistrationSchema = z.object({
+  nome: z.string().trim().min(2, 'Informe o nome do paciente.').max(180),
+  whatsapp: z.string().trim().refine(hasValidPhoneLength, 'Informe um WhatsApp valido.'),
+});
 
 export const scheduleQuerySchema = z
   .object({
@@ -41,6 +47,7 @@ export const scheduleEventSchema = z
     tipo: z.enum(['consulta', 'compromisso']),
     profissionalId: optionalUuid,
     pacienteId: optionalUuid,
+    pacientePreCadastro: patientPreRegistrationSchema.optional(),
     titulo: optionalText,
     categoria: optionalText,
     observacoes: optionalText,
@@ -71,8 +78,20 @@ export const scheduleEventSchema = z
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['fimEm'], message: 'Horario final invalido.' });
     }
 
-    if (value.tipo === 'consulta' && !value.pacienteId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ['pacienteId'], message: 'Selecione o paciente.' });
+    if (value.tipo === 'consulta' && !value.pacienteId && !value.pacientePreCadastro) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pacienteId'],
+        message: 'Selecione o paciente ou informe os dados para pre-cadastro.',
+      });
+    }
+
+    if (value.pacienteId && value.pacientePreCadastro) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pacientePreCadastro'],
+        message: 'Informe um paciente cadastrado ou um pre-cadastro, nao ambos.',
+      });
     }
 
     if (value.tipo === 'consulta' && !value.profissionalId) {

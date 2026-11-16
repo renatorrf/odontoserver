@@ -19,6 +19,7 @@ import { sendScheduleNotification } from './schedule-notification.service';
 import { scheduleStatusTransitions, ScheduleStatus } from './schedule-status';
 import { anamnesisAlertLabels } from '../patients/anamnesis.config';
 import { resolveAutomaticOrthodonticReturn } from './orthodontic-return.service';
+import { createOrLinkAgendaPreRegistration } from '../patients/patient.service';
 
 interface EventRow {
   id: string;
@@ -91,6 +92,18 @@ interface AlertRow {
   observacoes: string | null;
   status: string;
   agenda_evento_id: string | null;
+}
+
+async function resolveEventPatient(
+  client: PoolClient,
+  auth: AuthContext,
+  input: ScheduleEventInput,
+): Promise<ScheduleEventInput> {
+  if (input.tipo !== 'consulta' || input.pacienteId || !input.pacientePreCadastro) {
+    return input;
+  }
+  const patient = await createOrLinkAgendaPreRegistration(client, auth, input.pacientePreCadastro);
+  return { ...input, pacienteId: patient.id, pacientePreCadastro: undefined };
 }
 
 async function validateReferences(
@@ -615,10 +628,11 @@ export async function getEvent(auth: AuthContext, id: string) {
 export async function createEvent(auth: AuthContext, input: ScheduleEventInput) {
   try {
     const id = await transaction(async (client) => {
-      const { patientName, patientWhatsapp } = await validateReferences(client, auth, input);
-      const period = await resolveEventPeriod(client, auth, input);
-      const notifications = notificationSettings(input);
-      const title = input.tipo === 'consulta' ? patientName! : input.titulo!;
+      const eventInput = await resolveEventPatient(client, auth, input);
+      const { patientName, patientWhatsapp } = await validateReferences(client, auth, eventInput);
+      const period = await resolveEventPeriod(client, auth, eventInput);
+      const notifications = notificationSettings(eventInput);
+      const title = eventInput.tipo === 'consulta' ? patientName! : eventInput.titulo!;
       const result = await client.query<{ id: string }>(
         `
           insert into odonto.agenda_eventos (
@@ -635,20 +649,20 @@ export async function createEvent(auth: AuthContext, input: ScheduleEventInput) 
           returning id
         `,
         [
-          auth.empresaId, input.profissionalId ?? null, input.pacienteId ?? null, input.tipo,
-          title, optionalText(input.categoria), optionalText(input.observacoes), optionalText(input.observacoesProcedimentos),
-          period.start.toISOString(), period.end.toISOString(), input.diaInteiro, input.primeiraConsulta, optionalText(input.confirmacaoEnvio),
-          optionalText(input.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
+          auth.empresaId, eventInput.profissionalId ?? null, eventInput.pacienteId ?? null, eventInput.tipo,
+          title, optionalText(eventInput.categoria), optionalText(eventInput.observacoes), optionalText(eventInput.observacoesProcedimentos),
+          period.start.toISOString(), period.end.toISOString(), eventInput.diaInteiro, eventInput.primeiraConsulta, optionalText(eventInput.confirmacaoEnvio),
+          optionalText(eventInput.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
           auth.usuarioId,
         ],
       );
-      await replaceProcedures(client, auth, result.rows[0].id, input.procedimentos);
-      if (input.tipo === 'consulta') {
+      await replaceProcedures(client, auth, result.rows[0].id, eventInput.procedimentos);
+      if (eventInput.tipo === 'consulta') {
         await syncConsultationQuote(
           client,
           auth,
           result.rows[0].id,
-          input,
+          eventInput,
           patientName!,
           patientWhatsapp!,
         );
@@ -659,7 +673,7 @@ export async function createEvent(auth: AuthContext, input: ScheduleEventInput) 
         ) values ($1, $2, null, 'agendado', $3)`,
         [auth.empresaId, result.rows[0].id, auth.usuarioId],
       );
-      if (optionalText(input.observacoesProcedimentos)) {
+      if (optionalText(eventInput.observacoesProcedimentos)) {
         await client.query(
           `insert into odonto.audit_logs (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
            values ($1, $2, 'agenda_eventos', $3, 'create_procedure_notes', $4::jsonb)`,
@@ -693,15 +707,16 @@ export async function updateEvent(auth: AuthContext, id: string, input: Schedule
         throw notFound('Agendamento nao encontrado.');
       }
 
-      const { patientName, patientWhatsapp } = await validateReferences(client, auth, input);
-      const period = await resolveEventPeriod(client, auth, input, id);
-      const notifications = notificationSettings(input);
+      const eventInput = await resolveEventPatient(client, auth, input);
+      const { patientName, patientWhatsapp } = await validateReferences(client, auth, eventInput);
+      const period = await resolveEventPeriod(client, auth, eventInput, id);
+      const notifications = notificationSettings(eventInput);
       const previous = existing.rows[0];
-      if (previous.orcamento_id && previous.paciente_id !== (input.pacienteId ?? null)) throw badRequest('Nao e permitido trocar o paciente de uma consulta vinculada a orcamento.');
+      if (previous.orcamento_id && previous.paciente_id !== (eventInput.pacienteId ?? null)) throw badRequest('Nao e permitido trocar o paciente de uma consulta vinculada a orcamento.');
       rescheduled = new Date(previous.inicio_em).getTime() !== period.start.getTime()
         || new Date(previous.fim_em).getTime() !== period.end.getTime();
-      const title = input.tipo === 'consulta' ? patientName! : input.titulo!;
-      const procedureNotes = optionalText(input.observacoesProcedimentos);
+      const title = eventInput.tipo === 'consulta' ? patientName! : eventInput.titulo!;
+      const procedureNotes = optionalText(eventInput.observacoesProcedimentos);
       const procedureNotesChanged = previous.observacoes_procedimentos !== (procedureNotes ?? null);
       await client.query(
         `
@@ -720,16 +735,16 @@ export async function updateEvent(auth: AuthContext, id: string, input: Schedule
           where id = $1 and empresa_id = $2
         `,
         [
-          id, auth.empresaId, input.profissionalId ?? null, input.pacienteId ?? null, input.tipo,
-          title, optionalText(input.categoria), optionalText(input.observacoes), procedureNotes, period.start.toISOString(),
-          period.end.toISOString(), input.diaInteiro, input.primeiraConsulta, optionalText(input.confirmacaoEnvio),
-          optionalText(input.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
+          id, auth.empresaId, eventInput.profissionalId ?? null, eventInput.pacienteId ?? null, eventInput.tipo,
+          title, optionalText(eventInput.categoria), optionalText(eventInput.observacoes), procedureNotes, period.start.toISOString(),
+          period.end.toISOString(), eventInput.diaInteiro, eventInput.primeiraConsulta, optionalText(eventInput.confirmacaoEnvio),
+          optionalText(eventInput.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
           rescheduled, auth.usuarioId,
         ],
       );
-      await replaceProcedures(client, auth, id, input.procedimentos);
-      if (input.tipo === 'consulta') {
-        await syncConsultationQuote(client, auth, id, input, patientName!, patientWhatsapp!);
+      await replaceProcedures(client, auth, id, eventInput.procedimentos);
+      if (eventInput.tipo === 'consulta') {
+        await syncConsultationQuote(client, auth, id, eventInput, patientName!, patientWhatsapp!);
       } else {
         await client.query(
           'update odonto.agenda_eventos set orcamento_id = null where id = $1 and empresa_id = $2',
@@ -750,7 +765,7 @@ export async function updateEvent(auth: AuthContext, id: string, input: Schedule
             inicio_novo, fim_novo, motivo, created_by
           ) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [auth.empresaId, id, previous.inicio_em, previous.fim_em, period.start.toISOString(),
-            period.end.toISOString(), optionalText(input.motivoRemarcacao), auth.usuarioId],
+            period.end.toISOString(), optionalText(eventInput.motivoRemarcacao), auth.usuarioId],
         );
       }
     });

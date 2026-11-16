@@ -18,6 +18,14 @@ const schedule_notification_service_1 = require("./schedule-notification.service
 const schedule_status_1 = require("./schedule-status");
 const anamnesis_config_1 = require("../patients/anamnesis.config");
 const orthodontic_return_service_1 = require("./orthodontic-return.service");
+const patient_service_1 = require("../patients/patient.service");
+async function resolveEventPatient(client, auth, input) {
+    if (input.tipo !== 'consulta' || input.pacienteId || !input.pacientePreCadastro) {
+        return input;
+    }
+    const patient = await (0, patient_service_1.createOrLinkAgendaPreRegistration)(client, auth, input.pacientePreCadastro);
+    return { ...input, pacienteId: patient.id, pacientePreCadastro: undefined };
+}
 async function validateReferences(client, auth, input) {
     let patientName = null;
     let patientWhatsapp = null;
@@ -447,10 +455,11 @@ async function getEvent(auth, id) {
 async function createEvent(auth, input) {
     try {
         const id = await (0, pool_1.transaction)(async (client) => {
-            const { patientName, patientWhatsapp } = await validateReferences(client, auth, input);
-            const period = await resolveEventPeriod(client, auth, input);
-            const notifications = notificationSettings(input);
-            const title = input.tipo === 'consulta' ? patientName : input.titulo;
+            const eventInput = await resolveEventPatient(client, auth, input);
+            const { patientName, patientWhatsapp } = await validateReferences(client, auth, eventInput);
+            const period = await resolveEventPeriod(client, auth, eventInput);
+            const notifications = notificationSettings(eventInput);
+            const title = eventInput.tipo === 'consulta' ? patientName : eventInput.titulo;
             const result = await client.query(`
           insert into odonto.agenda_eventos (
             empresa_id, profissional_id, paciente_id, tipo, titulo, categoria, observacoes,
@@ -465,20 +474,20 @@ async function createEvent(auth, input) {
           )
           returning id
         `, [
-                auth.empresaId, input.profissionalId ?? null, input.pacienteId ?? null, input.tipo,
-                title, (0, normalize_1.optionalText)(input.categoria), (0, normalize_1.optionalText)(input.observacoes), (0, normalize_1.optionalText)(input.observacoesProcedimentos),
-                period.start.toISOString(), period.end.toISOString(), input.diaInteiro, input.primeiraConsulta, (0, normalize_1.optionalText)(input.confirmacaoEnvio),
-                (0, normalize_1.optionalText)(input.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
+                auth.empresaId, eventInput.profissionalId ?? null, eventInput.pacienteId ?? null, eventInput.tipo,
+                title, (0, normalize_1.optionalText)(eventInput.categoria), (0, normalize_1.optionalText)(eventInput.observacoes), (0, normalize_1.optionalText)(eventInput.observacoesProcedimentos),
+                period.start.toISOString(), period.end.toISOString(), eventInput.diaInteiro, eventInput.primeiraConsulta, (0, normalize_1.optionalText)(eventInput.confirmacaoEnvio),
+                (0, normalize_1.optionalText)(eventInput.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
                 auth.usuarioId,
             ]);
-            await replaceProcedures(client, auth, result.rows[0].id, input.procedimentos);
-            if (input.tipo === 'consulta') {
-                await syncConsultationQuote(client, auth, result.rows[0].id, input, patientName, patientWhatsapp);
+            await replaceProcedures(client, auth, result.rows[0].id, eventInput.procedimentos);
+            if (eventInput.tipo === 'consulta') {
+                await syncConsultationQuote(client, auth, result.rows[0].id, eventInput, patientName, patientWhatsapp);
             }
             await client.query(`insert into odonto.agenda_evento_status_historico (
           empresa_id, agenda_evento_id, status_anterior, status_novo, created_by
         ) values ($1, $2, null, 'agendado', $3)`, [auth.empresaId, result.rows[0].id, auth.usuarioId]);
-            if ((0, normalize_1.optionalText)(input.observacoesProcedimentos)) {
+            if ((0, normalize_1.optionalText)(eventInput.observacoesProcedimentos)) {
                 await client.query(`insert into odonto.audit_logs (empresa_id, usuario_id, entidade, entidade_id, acao, payload)
            values ($1, $2, 'agenda_eventos', $3, 'create_procedure_notes', $4::jsonb)`, [auth.empresaId, auth.usuarioId, result.rows[0].id, JSON.stringify({ campo: 'observacoes_procedimentos' })]);
             }
@@ -505,16 +514,17 @@ async function updateEvent(auth, id, input) {
             if (!existing.rowCount) {
                 throw (0, http_error_1.notFound)('Agendamento nao encontrado.');
             }
-            const { patientName, patientWhatsapp } = await validateReferences(client, auth, input);
-            const period = await resolveEventPeriod(client, auth, input, id);
-            const notifications = notificationSettings(input);
+            const eventInput = await resolveEventPatient(client, auth, input);
+            const { patientName, patientWhatsapp } = await validateReferences(client, auth, eventInput);
+            const period = await resolveEventPeriod(client, auth, eventInput, id);
+            const notifications = notificationSettings(eventInput);
             const previous = existing.rows[0];
-            if (previous.orcamento_id && previous.paciente_id !== (input.pacienteId ?? null))
+            if (previous.orcamento_id && previous.paciente_id !== (eventInput.pacienteId ?? null))
                 throw (0, http_error_1.badRequest)('Nao e permitido trocar o paciente de uma consulta vinculada a orcamento.');
             rescheduled = new Date(previous.inicio_em).getTime() !== period.start.getTime()
                 || new Date(previous.fim_em).getTime() !== period.end.getTime();
-            const title = input.tipo === 'consulta' ? patientName : input.titulo;
-            const procedureNotes = (0, normalize_1.optionalText)(input.observacoesProcedimentos);
+            const title = eventInput.tipo === 'consulta' ? patientName : eventInput.titulo;
+            const procedureNotes = (0, normalize_1.optionalText)(eventInput.observacoesProcedimentos);
             const procedureNotesChanged = previous.observacoes_procedimentos !== (procedureNotes ?? null);
             await client.query(`
           update odonto.agenda_eventos set
@@ -531,15 +541,15 @@ async function updateEvent(auth, id, input) {
             updated_by = $20
           where id = $1 and empresa_id = $2
         `, [
-                id, auth.empresaId, input.profissionalId ?? null, input.pacienteId ?? null, input.tipo,
-                title, (0, normalize_1.optionalText)(input.categoria), (0, normalize_1.optionalText)(input.observacoes), procedureNotes, period.start.toISOString(),
-                period.end.toISOString(), input.diaInteiro, input.primeiraConsulta, (0, normalize_1.optionalText)(input.confirmacaoEnvio),
-                (0, normalize_1.optionalText)(input.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
+                id, auth.empresaId, eventInput.profissionalId ?? null, eventInput.pacienteId ?? null, eventInput.tipo,
+                title, (0, normalize_1.optionalText)(eventInput.categoria), (0, normalize_1.optionalText)(eventInput.observacoes), procedureNotes, period.start.toISOString(),
+                period.end.toISOString(), eventInput.diaInteiro, eventInput.primeiraConsulta, (0, normalize_1.optionalText)(eventInput.confirmacaoEnvio),
+                (0, normalize_1.optionalText)(eventInput.lembreteEnvio), notifications.enabled, notifications.app, notifications.whatsapp,
                 rescheduled, auth.usuarioId,
             ]);
-            await replaceProcedures(client, auth, id, input.procedimentos);
-            if (input.tipo === 'consulta') {
-                await syncConsultationQuote(client, auth, id, input, patientName, patientWhatsapp);
+            await replaceProcedures(client, auth, id, eventInput.procedimentos);
+            if (eventInput.tipo === 'consulta') {
+                await syncConsultationQuote(client, auth, id, eventInput, patientName, patientWhatsapp);
             }
             else {
                 await client.query('update odonto.agenda_eventos set orcamento_id = null where id = $1 and empresa_id = $2', [id, auth.empresaId]);
@@ -553,7 +563,7 @@ async function updateEvent(auth, id, input) {
             empresa_id, agenda_evento_id, inicio_anterior, fim_anterior,
             inicio_novo, fim_novo, motivo, created_by
           ) values ($1, $2, $3, $4, $5, $6, $7, $8)`, [auth.empresaId, id, previous.inicio_em, previous.fim_em, period.start.toISOString(),
-                    period.end.toISOString(), (0, normalize_1.optionalText)(input.motivoRemarcacao), auth.usuarioId]);
+                    period.end.toISOString(), (0, normalize_1.optionalText)(eventInput.motivoRemarcacao), auth.usuarioId]);
             }
         });
         const event = await getEvent(auth, id);
